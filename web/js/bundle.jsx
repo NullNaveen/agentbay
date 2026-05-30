@@ -2118,7 +2118,7 @@ That's a lot of water for a moon smaller than ours.`;
         setTimeout(() => { try { localStorage.setItem("ab_seen_skills", JSON.stringify(list.map((s) => s.name))); } catch (e) {} }, 1500);
       }).catch(() => setSkills([]));
     }, []);
-    const isNew = (n) => skills && seen.size && !seen.has(n);
+    const isNew = (n) => !!(skills && seen.size > 0 && !seen.has(n));
     return (
       <Shell icon="Wand" title="Skills" onClose={onClose} width="min(760px, 94vw)">
         <div style={{ padding: "18px 24px", overflowY: "auto" }}>
