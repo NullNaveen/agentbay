@@ -1133,6 +1133,40 @@ That's a lot of water for a moon smaller than ours.`;
     );
   }
 
+  // ---- Accent color: curated "stones" that live-preview the whole app on hover ----
+  const ACCENTS = [
+    { name: "Sandal", hex: "#d9a36b" }, { name: "Clay", hex: "#cf7e5b" },
+    { name: "Coral", hex: "#ec7a5e" }, { name: "Rose", hex: "#e07a93" },
+    { name: "Rosewood", hex: "#c2698f" }, { name: "Plum", hex: "#9b7cd8" },
+    { name: "Indigo", hex: "#6d83e0" }, { name: "Ocean", hex: "#4f9fd6" },
+    { name: "Teal", hex: "#2fb0a3" }, { name: "Pine", hex: "#62a06a" },
+    { name: "Honey", hex: "#e0b13e" }, { name: "Slate", hex: "#8893a8" },
+  ];
+
+  function AccentPicker({ value, onPick }) {
+    const [hover, setHover] = React.useState(null);
+    // hover = live preview the whole UI; leaving reverts to the committed color
+    React.useEffect(() => {
+      document.documentElement.style.setProperty("--accent", hover || value || "#d9a36b");
+    }, [hover, value]);
+    const shown = ACCENTS.find((a) => a.hex === (hover || value));
+    return (
+      <div className="accent-wrap">
+        <div className="accent-stones" onMouseLeave={() => setHover(null)}>
+          {ACCENTS.map((a) => (
+            <button key={a.hex} type="button" aria-label={a.name}
+              className={"accent-stone" + (a.hex === value ? " sel" : "")} style={{ "--c": a.hex }}
+              onMouseEnter={() => setHover(a.hex)} onFocus={() => setHover(a.hex)}
+              onBlur={() => setHover(null)} onClick={() => { setHover(null); onPick(a.hex); }}>
+              {a.hex === value && <I.Check size={14} />}
+            </button>
+          ))}
+        </div>
+        <div className="accent-name">{shown ? shown.name : "Custom"}{hover ? " · preview" : ""}</div>
+      </div>
+    );
+  }
+
   // ---- About + self-update (pulls from the public repo) ----
   function AboutPanel({ onToast }) {
     const [v, setV] = React.useState(null);
@@ -1296,6 +1330,10 @@ That's a lot of water for a moon smaller than ours.`;
                   <Segmented value={theme} onChange={onTheme} options={[
                     { value: "light", label: "Light" }, { value: "dark", label: "Dark" }, { value: "system", label: "System" }]} />
                 </Row>
+                <div className="set-row" style={{ display: "block" }}>
+                  <div className="rl"><div className="t">Accent color</div><div className="d">Hover a color to preview it across the app, click to apply.</div></div>
+                  <AccentPicker value={s.accent} onPick={(hex) => set("accent", hex)} />
+                </div>
                 <Row t="Reduce motion" d="Turn off animations, transitions & easter eggs.">
                   <Switch on={s.reduceMotion} onChange={(v) => set("reduceMotion", v)} label="Reduce motion" />
                 </Row>
@@ -2635,7 +2673,7 @@ Object.assign(window, {
     const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
     useEffect(() => {
       const root = document.documentElement.style;
-      root.setProperty("--accent", t.accent);
+      // accent is owned by Settings → Appearance, not this hidden dev panel
       const rad = RADII[t.corners] || RADII.default;
       root.setProperty("--r", rad.r); root.setProperty("--r-lg", rad.rlg); root.setProperty("--r-xl", rad.rxl);
       root.setProperty("--content-fs", (DENSITY[t.density] || 15.5) + "px");
@@ -2676,7 +2714,7 @@ Object.assign(window, {
   const DEFAULT_SETTINGS = {
     reduceMotion: false, lang: "en", fontSize: "md", avatars: true, latex: true, codeBlocks: true,
     collapseDefault: false, bubbles: true, timestamps: false, autoScroll: true, followups: false,
-    agentsEnabled: false, systemPrompt: "", stt: "Whisper (local)", tts: "Browser (system)",
+    agentsEnabled: false, accent: "#d9a36b", systemPrompt: "", stt: "Whisper (local)", tts: "Browser (system)",
   };
   const USER = { name: "You", initials: "You", role: "Local", email: "" };
   const FONT_PX = { sm: 14.5, md: 15.5, lg: 17 };
@@ -2764,12 +2802,16 @@ Object.assign(window, {
       return () => mq.removeEventListener && mq.removeEventListener("change", apply);
     }, [theme]);
 
-    /* ---- reduce motion + font size ---- */
+    /* ---- reduce motion + font size + accent ---- */
     useEffect(() => {
       document.body.classList.toggle("no-anim", !!settings.reduceMotion);
       document.body.classList.toggle("force-anim", !settings.reduceMotion);
       document.documentElement.style.setProperty("--content-fs", FONT_PX[settings.fontSize] + "px");
     }, [settings.reduceMotion, settings.fontSize]);
+    useEffect(() => {
+      // one var drives the whole palette (the rest are color-mixed from it)
+      document.documentElement.style.setProperty("--accent", settings.accent || "#d9a36b");
+    }, [settings.accent]);
 
     const setS = (k, v) => setSettings((s) => ({ ...s, [k]: v }));
 
