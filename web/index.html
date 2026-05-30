@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>Hermes — Simple Chat</title>
+  <meta name="description" content="A simple, friendly chat interface powered by Hermes Agent." />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;550;600;650;700&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="/static/css/app.css" />
+
+  <template id="__bundler_thumbnail" data-bg-color="#faf2e8">
+    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <rect width="100" height="100" rx="22" fill="#faf2e8"/>
+      <g transform="translate(50 40)">
+        <path d="M-4 -2 C-18 -8 -32 -8 -42 0 C-32 0 -30 4 -34 8 C-26 4 -22 6 -24 12 C-30 6 -36 4 -44 8 Z" fill="#d9a36b"/>
+        <path d="M4 -2 C18 -8 32 -8 42 0 C32 0 30 4 34 8 C26 4 22 6 24 12 C30 6 36 4 44 8 Z" fill="#d9a36b"/>
+        <line x1="0" y1="-6" x2="0" y2="46" stroke="#b67d3f" stroke-width="6" stroke-linecap="round"/>
+        <circle cx="0" cy="-12" r="8" fill="#b67d3f"/>
+      </g>
+    </svg>
+  </template>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- QR generator: pure client-side encoder (the share link is never sent anywhere) -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+  <script type="text/babel" src="/static/js/bundle.jsx" data-presets="react"></script>
+  <script type="text/babel" data-presets="react">
+    try {
+      const root = ReactDOM.createRoot(document.getElementById("root"));
+      root.render(React.createElement(window.HermesApp));
+      console.log("[Hermes] mounted");
+    } catch (e) {
+      console.error("[Hermes] mount failed", e);
+      document.getElementById("root").innerHTML =
+        '<pre style="padding:24px;color:#d9534f;font:13px monospace;white-space:pre-wrap">' + (e && e.stack || e) + '</pre>';
+    }
+  </script>
+</body>
+</html>

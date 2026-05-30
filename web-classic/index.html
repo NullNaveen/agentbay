@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>AgentBay</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+  <!-- ONBOARDING / SETUP WIZARD -->
+  <section id="wizard" class="wizard">
+    <div class="wizard-card">
+      <div class="brand">
+        <div class="brand-mark">⚓</div>
+        <div>
+          <h1>AgentBay</h1>
+          <p class="sub">One-click launcher for your local AI agent</p>
+        </div>
+      </div>
+
+      <!-- step 1: pick agent -->
+      <div class="step" data-step="agent">
+        <h2><span class="dot">1</span> Choose your agent</h2>
+        <div class="agent-grid">
+          <button class="agent-pick" data-agent="hermes">
+            <div class="ap-emoji">⚕</div>
+            <div class="ap-name">Hermes Agent</div>
+            <div class="ap-desc">Nous Research · skills, memory, tools</div>
+          </button>
+          <button class="agent-pick" data-agent="openclaw">
+            <div class="ap-emoji">🐾</div>
+            <div class="ap-name">OpenClaw</div>
+            <div class="ap-desc">Multi-channel agent runtime</div>
+          </button>
+        </div>
+        <div class="env-line" id="envLine">detecting your machine…</div>
+      </div>
+
+      <!-- step 2: install / status -->
+      <div class="step hidden" data-step="install">
+        <h2><span class="dot">2</span> <span id="installTitle">Check installation</span></h2>
+        <div id="statusBox" class="status-box">Checking…</div>
+        <pre id="installLog" class="install-log hidden"></pre>
+        <div class="row">
+          <button id="installBtn" class="btn primary hidden">Install now</button>
+          <button id="installNext" class="btn hidden">Continue →</button>
+          <button class="btn ghost back-btn">← Back</button>
+        </div>
+      </div>
+
+      <!-- step 3: configure -->
+      <div class="step hidden" data-step="config">
+        <h2><span class="dot">3</span> Connect a model</h2>
+        <div class="field">
+          <label>Provider</label>
+          <select id="provider">
+            <option value="deepseek">DeepSeek (cloud API)</option>
+            <option value="local">Local (Ollama / MLX)</option>
+          </select>
+        </div>
+        <div id="deepseekFields">
+          <div class="field">
+            <label>DeepSeek API key</label>
+            <input id="dsKey" type="password" placeholder="sk-…" autocomplete="off">
+            <div class="hint">Stored locally in ~/.agentbay/config.json (chmod 600). <a href="https://platform.deepseek.com" target="_blank" rel="noopener">Get a key</a></div>
+          </div>
+          <div class="field">
+            <label>Model</label>
+            <select id="dsModel"><option value="deepseek-chat">deepseek-chat</option></select>
+          </div>
+        </div>
+        <div id="localFields" class="hidden">
+          <div class="field"><label>Base URL</label><input id="localUrl" value="http://localhost:11434/v1"></div>
+          <div class="field"><label>Model</label><input id="localModel" value="smart-model"></div>
+        </div>
+        <div class="row">
+          <button id="testKey" class="btn">Test connection</button>
+          <button id="configNext" class="btn primary">Save & start chatting →</button>
+          <button class="btn ghost back-btn">← Back</button>
+        </div>
+        <div id="testResult" class="test-result"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CHAT (open-webui style) -->
+  <section id="chat" class="chat hidden">
+    <aside class="sidebar" id="sidebar">
+      <div class="side-top">
+        <button id="newChat" class="newchat">＋ New chat</button>
+      </div>
+      <div class="convos" id="convos"></div>
+      <div class="side-bottom">
+        <div class="userpill">
+          <span class="avatar" id="agentAvatar">⚓</span>
+          <span id="agentName">AgentBay</span>
+          <button id="gearBtn" class="gear" title="Settings">⚙</button>
+        </div>
+      </div>
+    </aside>
+    <main class="thread-wrap">
+      <header class="topbar">
+        <button id="sideToggle" class="icon-btn">☰</button>
+        <div class="model-chip" id="modelChip">model</div>
+        <div class="spacer"></div>
+        <button id="themeBtn" class="icon-btn" title="Theme">◐</button>
+      </header>
+      <div id="thread" class="thread">
+        <div class="empty" id="emptyState">
+          <div class="empty-mark">⚓</div>
+          <h2 id="emptyTitle">How can I help?</h2>
+          <div class="suggests">
+            <button class="sg">Summarize a document</button>
+            <button class="sg">Write a Python script</button>
+            <button class="sg">Explain a concept simply</button>
+          </div>
+        </div>
+      </div>
+      <div class="composer">
+        <textarea id="input" rows="1" placeholder="Message your agent…"></textarea>
+        <button id="send" class="send" title="Send">➤</button>
+      </div>
+      <div class="composer-hint">AgentBay can make mistakes. Verify important info.</div>
+    </main>
+  </section>
+
+  <!-- SETTINGS MODAL -->
+  <div id="settingsModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><h3>Settings</h3><button id="closeSettings" class="icon-btn">✕</button></div>
+      <div class="field"><label>Agent</label><div id="setAgent" class="readout"></div></div>
+      <div class="field"><label>Provider</label>
+        <select id="setProvider"><option value="deepseek">DeepSeek</option><option value="local">Local</option></select></div>
+      <div class="field"><label>DeepSeek API key</label><input id="setKey" type="password" placeholder="leave blank to keep current"></div>
+      <div class="field"><label>Model</label><input id="setModel"></div>
+      <div class="row">
+        <button id="saveSettings" class="btn primary">Save</button>
+        <button id="reRun" class="btn ghost">Re-run setup</button>
+      </div>
+      <div id="setResult" class="test-result"></div>
+    </div>
+  </div>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>
