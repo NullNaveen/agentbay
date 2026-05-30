@@ -11,6 +11,8 @@ Run:  python3 server.py [--port 8700] [--host 127.0.0.1] [--no-browser]
 """
 
 import argparse
+import base64
+import datetime
 import io
 import json
 import os
@@ -25,6 +27,7 @@ import sys
 import tarfile
 import threading
 import time
+import uuid
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -701,6 +704,49 @@ def gen_followups(cfg, messages, provider=None, model=None):
         return {"followups": []}
 
 
+# ---- optional Langfuse tracing (env-gated; ships no keys) ------------------
+LANGFUSE = {
+    "host": os.environ.get("LANGFUSE_HOST", "").rstrip("/"),
+    "pk": os.environ.get("LANGFUSE_PUBLIC_KEY", ""),
+    "sk": os.environ.get("LANGFUSE_SECRET_KEY", ""),
+    "user": os.environ.get("LANGFUSE_USER", os.environ.get("AGENTBAY_USER", "agentbay")),
+}
+
+
+def langfuse_log(messages, res, provider, model, latency_ms):
+    """Fire-and-forget: send one trace + generation to Langfuse for this chat."""
+    lf = LANGFUSE
+    if not (lf["host"] and lf["pk"] and lf["sk"]):
+        return
+    try:
+        now = datetime.datetime.now(datetime.timezone.utc)
+        start = now - datetime.timedelta(milliseconds=latency_ms or 0)
+        iso = lambda t: t.isoformat().replace("+00:00", "Z")
+        last_user = next((m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), "")
+        reply = res.get("reply", "") if isinstance(res, dict) else ""
+        usage = (res or {}).get("usage") or {}
+        tid, gid = uuid.uuid4().hex, uuid.uuid4().hex
+        batch = [
+            {"id": uuid.uuid4().hex, "type": "trace-create", "timestamp": iso(now),
+             "body": {"id": tid, "name": "agentbay-chat", "userId": lf["user"],
+                      "input": last_user, "output": reply,
+                      "metadata": {"provider": provider, "model": model, "latency_ms": latency_ms}}},
+            {"id": uuid.uuid4().hex, "type": "generation-create", "timestamp": iso(now),
+             "body": {"id": gid, "traceId": tid, "name": "chat", "model": model or "",
+                      "input": messages, "output": reply,
+                      "startTime": iso(start), "endTime": iso(now),
+                      "usage": {"input": usage.get("prompt_tokens"), "output": usage.get("completion_tokens"),
+                                "total": usage.get("total_tokens")}}},
+        ]
+        data = json.dumps({"batch": batch}).encode()
+        auth = base64.b64encode(f"{lf['pk']}:{lf['sk']}".encode()).decode()
+        req = urllib.request.Request(lf["host"] + "/api/public/ingestion", data=data,
+                                     headers={"Content-Type": "application/json", "Authorization": "Basic " + auth})
+        _urlopen(req, 10).read()
+    except Exception:
+        pass
+
+
 def test_provider(cfg, provider, key_override=None, base_override=None):
     pid, spec, p = resolve_provider(cfg, provider)
     base = (base_override or p["base_url"]).rstrip("/")
@@ -927,6 +973,9 @@ class Handler(BaseHTTPRequestHandler):
             cfg = load_config()
             msgs = data.get("messages") or []
             res = chat_complete(cfg, msgs, provider=data.get("provider"), model=data.get("model"))
+            threading.Thread(target=langfuse_log,
+                             args=(msgs, res, res.get("provider"), res.get("model"), res.get("latency_ms")),
+                             daemon=True).start()
             return self._send(200, res)
         if path == "/api/followups":
             cfg = load_config()
