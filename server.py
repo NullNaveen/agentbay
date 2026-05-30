@@ -509,6 +509,76 @@ def run_share_install(job_id):
         log(f"ERROR: {e}")
 
 
+# ---- app self-update (pull from the public repo) --------------------------
+APP_REPO = os.environ.get("AGENTBAY_REPO", "NullNaveen/agentbay")
+
+
+def _git(*args, timeout=60):
+    return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True, timeout=timeout)
+
+
+def _app_local_sha():
+    if (ROOT / ".git").exists():
+        try:
+            r = _git("rev-parse", "HEAD")
+            return r.stdout.strip() or None
+        except Exception:
+            return None
+    return None
+
+
+def app_version():
+    sha = _app_local_sha()
+    if sha:
+        try:
+            n = _git("rev-list", "--count", "HEAD").stdout.strip()
+        except Exception:
+            n = ""
+        return (("r" + n + " · ") if n else "") + sha[:7]
+    return "source"
+
+
+def app_update_status():
+    local = _app_local_sha()
+    out = {"current": app_version(), "is_git": bool(local), "update_available": False}
+    try:
+        req = urllib.request.Request("https://api.github.com/repos/%s/commits/main" % APP_REPO,
+                                     headers={"User-Agent": "AgentBay", "Accept": "application/vnd.github.sha"})
+        latest = _urlopen(req, 15).read().decode().strip()
+        out["latest"] = latest[:7]
+        if local and latest:
+            out["update_available"] = (local != latest)
+    except Exception as e:
+        out["error"] = str(e)
+    return out
+
+
+def run_app_update(job_id):
+    def log(line):
+        with _job_lock:
+            _install_jobs[job_id]["log"].append(line)
+    try:
+        if not (ROOT / ".git").exists():
+            log("This install isn't a git checkout — re-run the installer to update.")
+            with _job_lock:
+                _install_jobs[job_id]["status"] = "error"
+            return
+        log("$ git pull --ff-only")
+        r = _git("pull", "--ff-only")
+        log(((r.stdout or "") + (r.stderr or "")).strip()[:2000])
+        ok = r.returncode == 0
+        with _job_lock:
+            _install_jobs[job_id]["status"] = "done" if ok else "error"
+        if ok:
+            log("Updated. Restarting…")
+            # re-exec with the new code; PID is preserved so systemd/supervisors are happy
+            threading.Timer(1.2, lambda: os.execv(sys.executable, [sys.executable] + sys.argv)).start()
+    except Exception as e:
+        with _job_lock:
+            _install_jobs[job_id]["status"] = "error"
+        log("ERROR: " + str(e))
+
+
 # ---- chat proxy -----------------------------------------------------------
 SYSTEM_PROMPT = ("You are a helpful AI assistant. Your default response language is English. "
                  "Respond in English for all English input — including short greetings like "
@@ -749,6 +819,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._serve_file("index.html", "text/html; charset=utf-8")
         if path == "/api/share/status":
             return self._send(200, share_status())
+        if path == "/api/app/version":
+            return self._send(200, app_update_status())
         if path.startswith("/static/"):
             return self._serve_file(path[len("/static/"):], None)
         if path == "/api/detect":
@@ -795,6 +867,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, res)
         if path == "/api/share/stop":
             return self._send(200, stop_share())
+        if path == "/api/app/update":
+            job = f"app-update-{int(time.time())}"
+            with _job_lock:
+                _install_jobs[job] = {"status": "running", "log": [], "agent": "agentbay"}
+            threading.Thread(target=run_app_update, args=(job,), daemon=True).start()
+            return self._send(200, {"job": job})
         if path == "/api/share/install":
             job = f"cloudflared-install-{int(time.time())}"
             with _job_lock:

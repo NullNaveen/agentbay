@@ -1133,6 +1133,46 @@ That's a lot of water for a moon smaller than ours.`;
     );
   }
 
+  // ---- About + self-update (pulls from the public repo) ----
+  function AboutPanel({ onToast }) {
+    const [v, setV] = React.useState(null);
+    const [busy, setBusy] = React.useState(false);
+    const [log, setLog] = React.useState(null);
+    const load = () => { setV(null); fetch("/api/app/version").then((r) => r.json()).then(setV).catch(() => setV({ current: "?", error: "offline" })); };
+    React.useEffect(() => { load(); }, []);
+    const update = () => {
+      setBusy(true); setLog(["Updating…"]);
+      fetch("/api/app/update", { method: "POST" }).then((r) => r.json()).then(({ job }) => {
+        const poll = setInterval(() => fetch("/api/install/status/" + job).then((r) => r.json()).then((j) => {
+          setLog(j.log || []);
+          if (j.status === "done") { clearInterval(poll); onToast({ type: "success", title: "Updated — restarting…" }); setTimeout(() => location.reload(), 4000); }
+          else if (j.status === "error") { clearInterval(poll); setBusy(false); onToast({ type: "error", title: "Update failed" }); }
+        }).catch(() => { clearInterval(poll); setTimeout(() => location.reload(), 4000); }), 1500);
+      }).catch(() => { setBusy(false); onToast({ type: "error", title: "Couldn't start update" }); });
+    };
+    return (
+      <div style={{ textAlign: "center", paddingTop: 24 }}>
+        <window.HermesGlyph size={56} />
+        <div style={{ fontWeight: 700, fontSize: 20, marginTop: 14 }}>Hermes — Simple Chat</div>
+        <div style={{ color: "var(--text-3)", marginTop: 4 }}>Version {v ? v.current : "…"} · MIT License</div>
+        {v && v.update_available ? (
+          <div style={{ marginTop: 18 }}>
+            <div style={{ color: "var(--accent-deep)", fontSize: 13.5, marginBottom: 10 }}>↑ A new version is available{v.latest ? " (" + v.latest + ")" : ""}.</div>
+            <button className="btn btn-primary" disabled={busy} onClick={update}>{busy ? "Updating…" : "Update now"}</button>
+          </div>
+        ) : v && v.is_git ? (
+          <div style={{ marginTop: 18 }}>
+            <div style={{ color: "var(--green)", fontSize: 13.5, marginBottom: 10 }}>You're on the latest version.</div>
+            <button className="btn btn-outline" onClick={load}>Check again</button>
+          </div>
+        ) : (
+          <button className="btn btn-outline" style={{ marginTop: 18 }} onClick={load}>Check for updates</button>
+        )}
+        {log && <pre style={{ marginTop: 14, maxHeight: 160, overflow: "auto", background: "#0c0c10", color: "#cfe", padding: 12, borderRadius: 10, fontSize: 12, whiteSpace: "pre-wrap", textAlign: "left" }}>{log.join("\n")}</pre>}
+      </div>
+    );
+  }
+
   // ---- Remote access: open a public link to this UI (tunnel + token gate) ----
   function RemotePanel({ onToast }) {
     const [st, setSt] = React.useState(null);
@@ -1340,14 +1380,7 @@ That's a lot of water for a moon smaller than ours.`;
               </div>
             )}
 
-            {tab === "about" && (
-              <div style={{ textAlign: "center", paddingTop: 30 }}>
-                <window.HermesGlyph size={56} />
-                <div style={{ fontWeight: 700, fontSize: 20, marginTop: 14 }}>Hermes — Simple Chat</div>
-                <div style={{ color: "var(--text-3)", marginTop: 4 }}>Version 3.0.1 · MIT License</div>
-                <div style={{ color: "var(--text-faint)", fontSize: 13, marginTop: 20 }}>Powered by Hermes Agent</div>
-              </div>
-            )}
+            {tab === "about" && <AboutPanel onToast={onToast} />}
           </div>
         </div>
       </Modal>
@@ -2678,6 +2711,12 @@ Object.assign(window, {
       setDefaultModel((dm) => (dm && ids.includes(dm)) ? dm : (ids[0] || ""));
     }), []);
     useEffect(() => { refreshModels(); }, []);
+    // passively surface an available app update once on load
+    useEffect(() => {
+      fetch("/api/app/version").then((r) => r.json()).then((d) => {
+        if (d && d.update_available) toast({ type: "info", title: "Update available", desc: "Open Settings → About to update." });
+      }).catch(() => {});
+    }, []);
 
     // composer
     const [draft, setDraft] = useState("");
