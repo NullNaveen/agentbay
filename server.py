@@ -892,6 +892,22 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, {"error": "unknown agent"})
         if path == "/api/enabled-models":
             return self._send(200, {"models": enabled_models(load_config())})
+        if path == "/api/skills":
+            # ask the active backend for its skills (Hermes gateway exposes /skills).
+            # graceful empty for plain LLM providers.
+            try:
+                cfg = load_config()
+                pid, spec, p = resolve_provider(cfg, None)
+                base, key = p["base_url"].rstrip("/"), p.get("key")
+                headers = {"Authorization": f"Bearer {key}"} if key else {}
+                req = urllib.request.Request(base + "/skills", headers=headers)
+                d = json.loads(_urlopen(req, 10).read())
+                items = d.get("data") or d.get("skills") or (d if isinstance(d, list) else [])
+                items = [{"name": s.get("name", ""), "description": s.get("description", ""),
+                          "category": s.get("category")} for s in items if isinstance(s, dict)]
+                return self._send(200, {"skills": items})
+            except Exception:
+                return self._send(200, {"skills": []})
         if path.startswith("/api/install/status/"):
             job = path.rsplit("/", 1)[-1]
             with _job_lock:

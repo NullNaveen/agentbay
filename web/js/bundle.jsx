@@ -546,7 +546,7 @@ That's a lot of water for a moon smaller than ours.`;
   function Sidebar(props) {
     const {
       collapsed, mobileOpen, sessions, activeId, folders,
-      onNewChat, onOpenChat, onOpenSearch, onOpenNotes, onOpenProjects, onOpenAgents, showAgents,
+      onNewChat, onOpenChat, onOpenSearch, onOpenNotes, onOpenProjects, onOpenAgents, showAgents, onOpenSkills, showSkills,
       onNewFolder, onChatMenu, onToggleCollapse, user, onUserClick, onResize,
       groupOrder, theme,
     } = props;
@@ -599,6 +599,11 @@ That's a lot of water for a moon smaller than ours.`;
           {showAgents && (
             <button className="sb-item" onClick={onOpenAgents}>
               <span className="ic"><I.Bot size={18} /></span><span className="sb-label">Agents</span>
+            </button>
+          )}
+          {showSkills && (
+            <button className="sb-item" onClick={onOpenSkills}>
+              <span className="ic"><I.Wand size={18} /></span><span className="sb-label">Skills</span>
             </button>
           )}
 
@@ -2102,7 +2107,43 @@ That's a lot of water for a moon smaller than ours.`;
     );
   }
 
-  window.Hub = { Projects, Agents, DEFAULT_AGENTS };
+  // ---- Skills: what the agent can do (self-created); flags newly added ones ----
+  function Skills({ onClose }) {
+    const [skills, setSkills] = useState(null);
+    const seen = (() => { try { return new Set(JSON.parse(localStorage.getItem("ab_seen_skills") || "[]")); } catch (e) { return new Set(); } })();
+    React.useEffect(() => {
+      fetch("/api/skills").then((r) => r.json()).then((d) => {
+        const list = d.skills || [];
+        setSkills(list);
+        setTimeout(() => { try { localStorage.setItem("ab_seen_skills", JSON.stringify(list.map((s) => s.name))); } catch (e) {} }, 1500);
+      }).catch(() => setSkills([]));
+    }, []);
+    const isNew = (n) => skills && seen.size && !seen.has(n);
+    return (
+      <Shell icon="Wand" title="Skills" onClose={onClose} width="min(760px, 94vw)">
+        <div style={{ padding: "18px 24px", overflowY: "auto" }}>
+          {!skills ? <div style={{ color: "var(--text-3)" }}>Loading…</div>
+            : skills.length === 0 ? <div style={{ color: "var(--text-3)" }}>No skills yet. Your agent creates skills automatically as it learns new tasks.</div>
+            : <div>
+                <div style={{ fontSize: 13, color: "var(--text-3)", marginBottom: 12 }}>{skills.length} skills — your agent builds these from experience and reuses them.</div>
+                {skills.map((s, i) => (
+                  <div key={i} className="set-row" style={{ padding: "10px 0" }}>
+                    <div className="rl" style={{ minWidth: 0 }}>
+                      <div className="t" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        {React.createElement(I.Wand || I.Sparkle, { size: 14, style: { color: "var(--accent-deep)" } })}{s.name}
+                        {isNew(s.name) && <span className="tag-mini" style={{ background: "var(--accent-soft)", color: "var(--accent-ink)" }}>new</span>}
+                      </div>
+                      {s.description && <div className="d">{s.description}</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>}
+        </div>
+      </Shell>
+    );
+  }
+
+  window.Hub = { Projects, Agents, Skills, DEFAULT_AGENTS };
 })();
 
 
@@ -2755,6 +2796,11 @@ Object.assign(window, {
         if (d && d.update_available) toast({ type: "info", title: "Update available", desc: "Open Settings → About to update." });
       }).catch(() => {});
     }, []);
+    // show the Skills entry only when the backend is an agent that has skills
+    const [skillsCount, setSkillsCount] = useState(0);
+    useEffect(() => {
+      fetch("/api/skills").then((r) => r.json()).then((d) => setSkillsCount((d.skills || []).length)).catch(() => {});
+    }, []);
 
     // composer
     const [draft, setDraft] = useState("");
@@ -3116,6 +3162,7 @@ Object.assign(window, {
           onNewChat={newChat} onOpenChat={openChat} onOpenSearch={() => setModal({ kind: "search" })}
           onOpenNotes={() => setModal({ kind: "notes" })}
           onOpenProjects={() => setModal({ kind: "projects" })} onOpenAgents={() => setModal({ kind: "agents" })}
+          onOpenSkills={() => setModal({ kind: "skills" })} showSkills={skillsCount > 0}
           showAgents={settings.agentsEnabled}
           onNewFolder={() => setModal({ kind: "folder" })} onChatMenu={openChatMenu}
           onToggleCollapse={() => { if (window.innerWidth <= 720) setMobileOpen((m) => !m); else setCollapsed((c) => !c); }}
@@ -3212,6 +3259,7 @@ Object.assign(window, {
         {modal && modal.kind === "notes" && <V.Notes onClose={() => setModal(null)} />}
         {modal && modal.kind === "projects" && <Hub.Projects projects={projects} setProjects={setProjects} onClose={() => setModal(null)} onToast={toast} onStartChat={startProjectChat} />}
         {modal && modal.kind === "agents" && <Hub.Agents agents={agents} setAgents={setAgents} models={D.MODELS} onClose={() => setModal(null)} onToast={toast} onStartChat={startAgentChat} />}
+        {modal && modal.kind === "skills" && <Hub.Skills onClose={() => setModal(null)} />}
         {modal && modal.kind === "delete" && (
           <Mo.DeleteModal title="Delete chat?" name={modal.data.title} body={"This will permanently delete \u201C" + modal.data.title + "\u201D. This can't be undone."}
             onClose={() => setModal(null)} onConfirm={() => deleteSession(modal.data)} />
