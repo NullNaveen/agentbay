@@ -32,6 +32,8 @@ import urllib.request
 import urllib.error
 import urllib.parse
 import webbrowser
+import zipfile
+import html as _html
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -86,7 +88,18 @@ PROVIDERS = {
     "openai":   {"label": "OpenAI", "api": "openai", "base_url": "https://api.openai.com/v1",
                  "default_model": "gpt-4o-mini", "key_env": "OPENAI_API_KEY", "needs_key": True},
     "anthropic":{"label": "Claude (Anthropic)", "api": "anthropic", "base_url": "https://api.anthropic.com/v1",
-                 "default_model": "claude-sonnet-4-5", "key_env": "ANTHROPIC_API_KEY", "needs_key": True},
+                 "default_model": "claude-sonnet-4-6", "key_env": "ANTHROPIC_API_KEY", "needs_key": True},
+    "gemini":   {"label": "Google Gemini", "api": "openai", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+                 "default_model": "gemini-2.5-flash", "key_env": "GEMINI_API_KEY", "needs_key": True},
+    "groq":     {"label": "Groq", "api": "openai", "base_url": "https://api.groq.com/openai/v1",
+                 "default_model": "llama-3.3-70b-versatile", "key_env": "GROQ_API_KEY", "needs_key": True},
+    "openrouter": {"label": "OpenRouter", "api": "openai", "base_url": "https://openrouter.ai/api/v1",
+                 "default_model": "openai/gpt-5-mini", "key_env": "OPENROUTER_API_KEY", "needs_key": True},
+    "mistral":  {"label": "Mistral", "api": "openai", "base_url": "https://api.mistral.ai/v1",
+                 "default_model": "mistral-large-latest", "key_env": "MISTRAL_API_KEY", "needs_key": True},
+    "nous":     {"label": "Nous Portal (free models)", "api": "openai",
+                 "base_url": "https://inference-api.nousresearch.com/v1",
+                 "default_model": "", "key_env": None, "needs_key": True, "oauth": "nous", "free": True},
     "local":    {"label": "Local (Ollama / MLX)", "api": "openai", "base_url": "http://localhost:11434/v1",
                  "default_model": "smart-model", "key_env": None, "needs_key": False},
 }
@@ -195,6 +208,8 @@ def public_config(cfg):
         }
     c["providers"] = provs
     c["enabled_models"] = enabled_models(cfg)
+    c["user_name"] = (cfg.get("display_name") or os.environ.get("AGENTBAY_USER")
+                      or os.environ.get("USER") or os.environ.get("USERNAME") or "User")
     return c
 
 
@@ -224,6 +239,79 @@ def resolve_provider(cfg, pid=None, model=None):
     }
 
 
+# ---- project knowledge: extract text from any uploaded file ---------------
+_TEXT_EXT = {".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".yaml", ".yml",
+             ".xml", ".html", ".htm", ".py", ".js", ".jsx", ".ts", ".tsx", ".java",
+             ".c", ".h", ".cpp", ".cc", ".hpp", ".go", ".rs", ".rb", ".php", ".sh",
+             ".bash", ".zsh", ".sql", ".css", ".scss", ".less", ".ini", ".toml",
+             ".cfg", ".conf", ".log", ".env", ".tex", ".rst", ".srt", ".vtt",
+             ".gitignore", ".dockerfile", ".properties", ".kt", ".swift", ".m",
+             ".r", ".lua", ".pl", ".dart", ".scala", ".clj", ".ex", ".exs"}
+
+
+def _ooxml_text(data):
+    """Extract text from OOXML (.docx/.pptx/.xlsx) — a zip of XML parts. Stdlib only."""
+    out = []
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        names = z.namelist()
+        parts = [n for n in names if re.match(r"word/(document|header\d*|footer\d*)\.xml$", n)]
+        slides = [n for n in names if re.match(r"ppt/slides/slide\d+\.xml$", n)]
+        parts += sorted(slides, key=lambda s: int(re.search(r"(\d+)", s).group(1)))
+        if "xl/sharedStrings.xml" in names:
+            parts.append("xl/sharedStrings.xml")
+        for n in parts:
+            raw = z.read(n).decode("utf-8", "ignore")
+            raw = re.sub(r"</w:p>|</a:p>|</a:t>|</t>|<w:br/>|<a:br/>", "\n", raw)  # paragraph/cell breaks
+            raw = re.sub(r"<[^>]+>", "", raw)
+            out.append(_html.unescape(raw))
+    txt = "\n".join(out)
+    return re.sub(r"\n{3,}", "\n\n", txt).strip()
+
+
+def _pdf_text(data):
+    """Extract via poppler's pdftotext if installed (cross-platform, no python deps)."""
+    exe = shutil.which("pdftotext")
+    if not exe:
+        return ""
+    try:
+        p = subprocess.run([exe, "-q", "-layout", "-", "-"], input=data,
+                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=60)
+        return p.stdout.decode("utf-8", "ignore").strip()
+    except Exception:
+        return ""
+
+
+def _rtf_text(data):
+    s = data.decode("latin-1", "ignore")
+    s = re.sub(r"\\'[0-9a-fA-F]{2}", "", s)
+    s = re.sub(r"\\[a-zA-Z]+-?\d* ?", "", s)
+    s = re.sub(r"[{}]", "", s)
+    return re.sub(r"\n{3,}", "\n\n", s).strip()
+
+
+def extract_text(name, data):
+    """Best-effort text extraction for project knowledge. Returns (text, note)."""
+    ext = os.path.splitext(name or "")[1].lower()
+    if ext in _TEXT_EXT or not ext:
+        try:
+            return data.decode("utf-8"), ""
+        except UnicodeDecodeError:
+            return data.decode("utf-8", "ignore"), "decoded with some replacements"
+    if ext in (".docx", ".pptx", ".xlsx"):
+        try:
+            t = _ooxml_text(data)
+            return t, ("" if t else "no readable text found")
+        except Exception as e:
+            return "", f"could not parse {ext}: {e}"
+    if ext == ".pdf":
+        t = _pdf_text(data)
+        return (t, "") if t else ("", "PDF needs `pdftotext` (poppler-utils) installed on this machine")
+    if ext == ".rtf":
+        return _rtf_text(data), ""
+    # images, archives, legacy .doc, unknown binaries: keep a reference but no text
+    return "", f"{ext or 'binary'} file stored — no text could be extracted"
+
+
 # ---- OS / agent detection -------------------------------------------------
 def detect_os():
     sysname = platform.system().lower()  # darwin / linux / windows
@@ -235,8 +323,42 @@ def detect_os():
     }
 
 
+def _extra_bin_dirs():
+    """Install locations that aren't always on a systemd/service PATH."""
+    home = Path.home()
+    dirs = ["/usr/local/bin", "/usr/bin", "/bin", "/opt/homebrew/bin", "/snap/bin",
+            str(home / ".local/bin"), str(home / ".hermes/bin"), str(home / "bin"),
+            str(home / ".npm-global/bin"), str(home / ".cargo/bin"),
+            str(home / ".bun/bin"), str(home / "go/bin")]
+    # node version managers (nvm / fnm) install global CLIs under per-version bins
+    for base in [home / ".nvm/versions/node", home / ".local/share/fnm/node-versions",
+                 home / ".fnm/node-versions"]:
+        try:
+            dirs += [str(d) for d in base.glob("*/bin")]
+            dirs += [str(d) for d in base.glob("*/installation/bin")]
+        except Exception:
+            pass
+    try:
+        dirs.append(str(BIN_DIR))   # AgentBay's own tool dir
+    except Exception:
+        pass
+    return dirs
+
+
 def which(binname):
-    return shutil.which(binname)
+    p = shutil.which(binname)
+    if p:
+        return p
+    exts = ["", ".cmd", ".exe", ".bat"] if os.name == "nt" else [""]
+    for d in _extra_bin_dirs():
+        for ext in exts:
+            cand = Path(d) / (binname + ext)
+            try:
+                if cand.is_file() and os.access(str(cand), os.X_OK):
+                    return str(cand)
+            except Exception:
+                pass
+    return None
 
 
 def agent_status(agent_id):
@@ -246,7 +368,8 @@ def agent_status(agent_id):
     version = None
     if installed:
         try:
-            out = subprocess.run(spec["version_cmd"], capture_output=True, text=True, timeout=20)
+            cmd = [path] + list(spec["version_cmd"][1:])   # use the resolved path, not bare name
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
             version = (out.stdout or out.stderr).strip().splitlines()[0] if (out.stdout or out.stderr) else None
         except Exception:
             version = "unknown"
@@ -747,33 +870,47 @@ def langfuse_log(messages, res, provider, model, latency_ms):
         pass
 
 
+# non-chat models to hide from the picker (embeddings/audio/image/etc.)
+_NON_CHAT_RE = re.compile(
+    r"(embed|whisper|tts|text-to-speech|speech|dall-?e|audio|realtime|moderation|"
+    r"rerank|guard|safety|image|sora|veo|imagen|babbage|davinci|curie|ada|"
+    r"text-(ada|babbage|curie|davinci)|-tts|-vision$|aqa)", re.I)
+
+
+def list_models(spec, base, key):
+    """Fetch the provider's LIVE model list, filtered to usable chat models.
+    Anthropic uses its native /models (x-api-key + version); everything else is
+    OpenAI-wire GET /models with a Bearer key."""
+    base = base.rstrip("/")
+    if spec.get("api") == "anthropic":
+        req = urllib.request.Request(base + "/models?limit=200",
+                                     headers={"x-api-key": key or "", "anthropic-version": "2023-06-01"})
+        with _urlopen(req, 20) as r:
+            d = json.loads(r.read())
+        return [m.get("id") for m in d.get("data", []) if m.get("id")]   # already chat-only
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
+    req = urllib.request.Request(base + "/models", headers=headers)
+    with _urlopen(req, 20) as r:
+        d = json.loads(r.read())
+    items = d.get("data") if isinstance(d, dict) else (d if isinstance(d, list) else [])
+    ids = [m.get("id") for m in (items or []) if isinstance(m, dict) and m.get("id")]
+    return [m for m in ids if not _NON_CHAT_RE.search(m)]
+
+
 def test_provider(cfg, provider, key_override=None, base_override=None):
     pid, spec, p = resolve_provider(cfg, provider)
     base = (base_override or p["base_url"]).rstrip("/")
     key = key_override or p["key"]
-    if spec["needs_key"] and not key:
+    if spec.get("needs_key") and not key:
         return {"ok": False, "error": "no key provided"}
     try:
-        if spec["api"] == "anthropic":
-            # cheapest validation: a 1-token messages call
-            req = urllib.request.Request(base + "/messages",
-                data=json.dumps({"model": p["model"], "max_tokens": 1,
-                                 "messages": [{"role": "user", "content": "hi"}]}).encode(),
-                headers={"Content-Type": "application/json", "x-api-key": key,
-                         "anthropic-version": "2023-06-01"})
-            with _urlopen(req, 20):
-                pass
-            return {"ok": True, "models": [p["model"], "claude-opus-4-1", "claude-haiku-4-5"]}
-        else:
-            headers = {}
-            if key:
-                headers["Authorization"] = f"Bearer {key}"
-            req = urllib.request.Request(base + "/models", headers=headers)
-            with _urlopen(req, 20) as r:
-                d = json.loads(r.read())
-            return {"ok": True, "models": [m.get("id") for m in d.get("data", [])][:40]}
+        models = list_models(spec, base, key)
+        if not models:
+            dm = spec.get("default_model")
+            return {"ok": True, "models": [dm] if dm else []}
+        return {"ok": True, "models": models[:100]}
     except urllib.error.HTTPError as e:
-        return {"ok": False, "error": f"HTTP {e.code}"}
+        return {"ok": False, "error": f"HTTP {e.code}: {e.read().decode('utf-8', 'ignore')[:160]}"}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
@@ -985,6 +1122,20 @@ class Handler(BaseHTTPRequestHandler):
                                 key_override=data.get("key") or data.get("deepseek_key"),
                                 base_override=data.get("base_url"))
             return self._send(200, res)
+        if path == "/api/extract":
+            name = data.get("name") or "file"
+            b64 = data.get("b64") or ""
+            try:
+                raw = base64.b64decode(b64.split(",", 1)[-1])   # tolerate data:URL prefix
+            except Exception:
+                return self._send(400, {"error": "bad base64"})
+            if len(raw) > 25 * 1024 * 1024:
+                return self._send(200, {"text": "", "note": "file too large (>25 MB)", "chars": 0})
+            try:
+                text, note = extract_text(name, raw)
+            except Exception as e:
+                text, note = "", f"extraction error: {e}"
+            return self._send(200, {"text": text[:300000], "note": note, "chars": len(text)})
         if path == "/api/chat":
             cfg = load_config()
             msgs = data.get("messages") or []

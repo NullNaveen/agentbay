@@ -147,7 +147,7 @@
 (function () {
   // Models shown in the chat menu are the user-ENABLED models, fetched live
   // from /api/enabled-models. Each entry id = "provider::model".
-  const PROVIDER_ICON = { deepseek: "Wand", openai: "Sparkle", anthropic: "Brain", local: "Server" };
+  const PROVIDER_ICON = { openai: "Sparkle", anthropic: "Brain", deepseek: "Wand", gemini: "Globe", groq: "Zap", openrouter: "Layers", mistral: "Bot", nous: "Gift", local: "Server" };
   const MODELS = [];   // mutated in place by refreshModels() so references hold
   function refreshModels() {
     return fetch("/api/enabled-models").then((r) => r.json()).then((d) => {
@@ -1001,7 +1001,7 @@ That's a lot of water for a moon smaller than ours.`;
   }
 
   // ---- Providers panel: add provider → key → fetch models → pick which to enable ----
-  const PROV_ORDER = ["deepseek", "openai", "anthropic", "local"];
+  const PROV_ORDER = ["deepseek", "anthropic", "openai", "gemini", "groq", "openrouter", "mistral", "nous", "local"];
   function ProvidersPanel({ onToast }) {
     const [provs, setProvs] = React.useState(null);
     const [active, setActive] = React.useState("deepseek");
@@ -1064,7 +1064,10 @@ That's a lot of water for a moon smaller than ours.`;
                 </div>
               )}
               {pid === "local" && <div style={{ marginBottom: 8 }}><label className="field-label">Base URL</label>
-                <input className="field" value={draft[pid].base_url} onChange={(e) => upd(pid, "base_url", e.target.value)} /></div>}
+                <input className="field" value={draft[pid].base_url} onChange={(e) => upd(pid, "base_url", e.target.value)} />
+                <p style={{ fontSize: 12, color: "var(--text-3)", margin: "6px 0 0" }}>Point this at the server that hosts your models, then Fetch:
+                  Ollama <code>http://localhost:11434/v1</code>, LM Studio / MLX <code>http://localhost:1234/v1</code>.
+                  Note: an agent gateway exposes only its own agent — for the raw local models use the model server's port.</p></div>}
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <button className="btn btn-outline" disabled={st.busy} onClick={() => fetchModels(pid)}>{st.busy ? "Fetching…" : "Fetch models"}</button>
                 {st.msg && <span style={{ fontSize: 12, color: st.ok ? "var(--green)" : (st.ok === false ? "var(--red)" : "var(--text-3)") }}>{st.msg}</span>}
@@ -1770,7 +1773,10 @@ That's a lot of water for a moon smaller than ours.`;
   }
 
   /* ---------- S23 changelog ---------- */
-  function ChangelogModal({ onClose }) {
+  const CHANGELOG_LATEST = "3.0.1";
+  function ChangelogModal({ onClose, onSeen }) {
+    const [dontShow, setDontShow] = React.useState(false);
+    const close = () => { onSeen && onSeen(dontShow ? "ALL" : CHANGELOG_LATEST); onClose(); };
     const entries = [
       { v: "3.0.1", d: "Refined the streaming animation & added a thinking mascot." },
       { v: "3.0.0", d: "Brand-new simplified interface for everyday chat." },
@@ -1779,8 +1785,8 @@ That's a lot of water for a moon smaller than ours.`;
       { v: "2.7.2", d: "Share links now include a QR code." },
     ];
     return (
-      <Modal onClose={onClose} width={480} labelledBy="cl-h">
-        <ModalHead title="What's new" onClose={onClose} id="cl-h" />
+      <Modal onClose={close} width={480} labelledBy="cl-h">
+        <ModalHead title="What's new" onClose={close} id="cl-h" />
         <div className="modal-body">
           {entries.map((e) => (
             <div key={e.v} style={{ display: "flex", gap: 12, padding: "12px 0", borderTop: "1px solid var(--border)" }}>
@@ -1790,8 +1796,8 @@ That's a lot of water for a moon smaller than ours.`;
           ))}
         </div>
         <div className="modal-foot" style={{ justifyContent: "space-between" }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-3)" }}><input type="checkbox" /> Don't show again</label>
-          <button className="btn btn-primary" onClick={onClose}>Got it</button>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-3)", cursor: "pointer" }}><input type="checkbox" checked={dontShow} onChange={(e) => setDontShow(e.target.checked)} /> Don't show again</label>
+          <button className="btn btn-primary" onClick={close}>Got it</button>
         </div>
       </Modal>
     );
@@ -1999,13 +2005,23 @@ That's a lot of water for a moon smaller than ours.`;
     const upd = (patch) => setProjects((ps) => ps.map((p) => p.id === activeId ? { ...p, ...patch } : p));
     const add = () => { const id = "p" + Date.now().toString(36); setProjects((ps) => [{ id, name: "New project", instructions: "", files: [], color: COLORS[ps.length % COLORS.length] }, ...ps]); setActiveId(id); };
     const del = () => { if (proj) { setProjects((ps) => ps.filter((p) => p.id !== activeId)); setActiveId(null); onToast({ type: "info", title: "Project deleted" }); } };
+    const [drag, setDrag] = useState(false);
     const addFiles = (list) => {
+      const pid = activeId;
       Array.from(list || []).forEach((f) => {
-        if ((TEXT_RE.test(f.name) || TEXT_RE.test(f.type || "")) && f.size <= 200000) {
-          const fr = new FileReader();
-          fr.onload = () => setProjects((ps) => ps.map((p) => p.id === activeId ? { ...p, files: [...p.files, { name: f.name, size: fmtSize(f.size), text: String(fr.result).slice(0, 100000) }] } : p));
-          fr.readAsText(f);
-        } else { onToast({ type: "info", title: f.name + " skipped", desc: "Only text files can be added to project knowledge." }); }
+        if (f.size > 25 * 1024 * 1024) { onToast({ type: "info", title: f.name + " skipped", desc: "Files must be under 25 MB." }); return; }
+        const fr = new FileReader();
+        fr.onload = () => {
+          fetch("/api/extract", { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: f.name, b64: String(fr.result) }) })
+            .then((r) => r.json())
+            .then((res) => {
+              setProjects((ps) => ps.map((p) => p.id === pid ? { ...p, files: [...p.files, { name: f.name, size: fmtSize(f.size), text: res.text || "", note: res.note || "" }] } : p));
+              if (!res.text) onToast({ type: "info", title: f.name + " added", desc: res.note || "stored — no text extracted" });
+            })
+            .catch(() => onToast({ type: "error", title: "Upload failed", desc: f.name }));
+        };
+        fr.readAsDataURL(f);   // base64 (handles any file type)
       });
     };
     const know = proj ? proj.files.reduce((n, f) => n + (f.text ? f.text.length : 0), 0) : 0;
@@ -2028,7 +2044,10 @@ That's a lot of water for a moon smaller than ours.`;
                 <div><I.Folder size={34} style={{ marginBottom: 10 }} /><div>Create a project to give Hermes standing instructions and knowledge files.</div></div>
               </div>
             ) : (
-              <div style={{ padding: "20px 24px" }}>
+              <div style={{ padding: "20px 24px", outline: drag ? "2px dashed var(--accent)" : "none", outlineOffset: -8, borderRadius: 12 }}
+                onDragOver={(e) => { e.preventDefault(); if (!drag) setDrag(true); }}
+                onDragLeave={(e) => { e.preventDefault(); setDrag(false); }}
+                onDrop={(e) => { e.preventDefault(); setDrag(false); addFiles(e.dataTransfer.files); }}>
                 <input className="field" value={proj.name} onChange={(e) => upd({ name: e.target.value })} style={{ fontSize: 16, fontWeight: 650, marginBottom: 16 }} />
                 <label className="field-label">Custom instructions</label>
                 <textarea className="field" value={proj.instructions} onChange={(e) => upd({ instructions: e.target.value })}
@@ -2039,10 +2058,10 @@ That's a lot of water for a moon smaller than ours.`;
                 </div>
                 <input ref={fileRef} type="file" multiple style={{ display: "none" }} onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
                 {proj.files.length === 0 ? (
-                  <div style={{ border: "1px dashed var(--border-strong)", borderRadius: 10, padding: "18px", textAlign: "center", color: "var(--text-3)", fontSize: 13 }}>No files yet. Add text files (.md, .txt, .csv, code…) Hermes should know about.</div>
+                  <div style={{ border: "1px dashed var(--border-strong)", borderRadius: 10, padding: "18px", textAlign: "center", color: "var(--text-3)", fontSize: 13 }}>Drag files here, or click <strong>Add files</strong>. Any type — docs (.docx, .pdf, .xlsx, .pptx), code, .csv, .txt, images. The assistant reads their text.</div>
                 ) : proj.files.map((f, i) => (
                   <div key={i} className="set-row" style={{ padding: "8px 0" }}>
-                    <div className="rl" style={{ display: "flex", alignItems: "center", gap: 9 }}><I.FileText size={15} style={{ color: "var(--text-3)" }} /><div><div className="t">{f.name}</div><div className="d">{f.size}</div></div></div>
+                    <div className="rl" style={{ display: "flex", alignItems: "center", gap: 9 }}><I.FileText size={15} style={{ color: f.text ? "var(--text-3)" : "var(--text-faint)" }} /><div><div className="t">{f.name}</div><div className="d">{f.size}{f.note ? " · " + f.note : (f.text ? "" : "")}</div></div></div>
                     <button className="btn btn-ghost" style={{ padding: "4px 8px" }} onClick={() => upd({ files: proj.files.filter((_, j) => j !== i) })}><I.X size={14} /></button>
                   </div>
                 ))}
@@ -2757,7 +2776,14 @@ Object.assign(window, {
     collapseDefault: false, bubbles: true, timestamps: false, autoScroll: true, followups: false,
     agentsEnabled: false, accent: "#d9a36b", systemPrompt: "", stt: "Whisper (local)", tts: "Browser (system)",
   };
-  const USER = { name: "You", initials: "You", role: "Local", email: "" };
+  function buildUser(name) {
+    const nm = (name || "").trim();
+    if (!nm) return { name: "User", initials: "U", role: "Local", email: "" };
+    const w = nm.split(/\s+/);
+    const initials = (w.length > 1 ? (w[0][0] + w[1][0]) : nm.slice(0, 2)).toUpperCase();
+    return { name: nm, initials, role: "Local", email: "" };
+  }
+  const USER = buildUser("");
   const FONT_PX = { sm: 14.5, md: 15.5, lg: 17 };
 
   function uid() { return "s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5); }
@@ -2780,6 +2806,10 @@ Object.assign(window, {
     const [composerProject, setComposerProject] = useState(null); // project id for the next new chat
     const [composerAgent, setComposerAgent] = useState(null);     // agent id for the next new chat
     const [modelsTick, setModelsTick] = useState(0);   // bumps when enabled models refresh
+    const [userName, setUserName] = useState("");      // real account name from server
+    const user = React.useMemo(() => buildUser(userName), [userName]);
+    const [changelogSeen, setChangelogSeen] = useLocal("ab_changelog_seen", "");
+    useEffect(() => { fetch("/api/config").then((r) => r.json()).then((c) => setUserName(c.user_name || "")).catch(() => {}); }, []);
     const [suggestions] = useState(() => D.pickSuggestions());
 
     // load enabled models from backend on mount + expose a refresher
@@ -3090,18 +3120,21 @@ Object.assign(window, {
     const fmtSize = (n) => n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFixed(0) + " KB" : (n / 1048576).toFixed(1) + " MB";
     const TEXT_RE = /\.(txt|md|markdown|csv|tsv|json|ya?ml|log|js|jsx|ts|tsx|py|rb|go|rs|java|c|h|cpp|cs|php|sh|sql|html?|css|xml|ini|toml|env)$|^text\//i;
     const onFilesPicked = (fileList) => {
-      const files = Array.from(fileList || []);
-      files.forEach((f) => {
-        const isText = TEXT_RE.test(f.name) || TEXT_RE.test(f.type || "");
-        if (isText && f.size <= 200000) {
-          const fr = new FileReader();
-          fr.onload = () => setAttachments((x) => [...x, { name: f.name, size: fmtSize(f.size), kind: "file", text: String(fr.result).slice(0, 100000) }]);
-          fr.readAsText(f);
-        } else {
-          const kind = /^image\//.test(f.type) ? "image" : "file";
-          setAttachments((x) => [...x, { name: f.name, size: fmtSize(f.size), kind, text: "" }]);
-          if (!isText) toast({ type: "info", title: f.name + " attached by name", desc: "Binary/large files aren't read into the prompt." });
-        }
+      Array.from(fileList || []).forEach((f) => {
+        if (f.size > 25 * 1024 * 1024) { toast({ type: "info", title: f.name + " skipped", desc: "Files must be under 25 MB." }); return; }
+        const kind = /^image\//.test(f.type) ? "image" : "file";
+        const fr = new FileReader();
+        fr.onload = () => {
+          fetch("/api/extract", { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: f.name, b64: String(fr.result) }) })
+            .then((r) => r.json())
+            .then((res) => {
+              setAttachments((x) => [...x, { name: f.name, size: fmtSize(f.size), kind, text: res.text || "" }]);
+              if (!res.text && kind !== "image") toast({ type: "info", title: f.name + " attached", desc: res.note || "no text extracted" });
+            })
+            .catch(() => toast({ type: "error", title: "Attach failed", desc: f.name }));
+        };
+        fr.readAsDataURL(f);   // base64 → server extracts any file type
       });
     };
     const attachFile = () => fileInputRef.current && fileInputRef.current.click();
@@ -3158,7 +3191,7 @@ Object.assign(window, {
         {mobileOpen && <div className="mobile-backdrop" onClick={() => setMobileOpen(false)} />}
         <window.Sidebar
           collapsed={collapsed} mobileOpen={mobileOpen} sessions={sessions} activeId={activeId}
-          folders={folders} groupOrder={D.GROUP_ORDER} user={USER} theme={theme}
+          folders={folders} groupOrder={D.GROUP_ORDER} user={user} theme={theme}
           onNewChat={newChat} onOpenChat={openChat} onOpenSearch={() => setModal({ kind: "search" })}
           onOpenNotes={() => setModal({ kind: "notes" })}
           onOpenProjects={() => setModal({ kind: "projects" })} onOpenAgents={() => setModal({ kind: "agents" })}
@@ -3206,9 +3239,10 @@ Object.assign(window, {
             <div className="tb-spacer" />
             <div className="right">
               <button ref={settingsRef} className="icon-btn" aria-label="Settings" onClick={() => setModal({ kind: "settings" })}><I.Settings size={19} /></button>
-              <button ref={bellRef} className="icon-btn has-badge" aria-label="Notifications" onClick={() => setModal({ kind: "changelog" })}><I.Bell size={19} /><span className="badge" /></button>
+              {(() => { const showBadge = changelogSeen !== "ALL" && changelogSeen !== CHANGELOG_LATEST;
+                return <button ref={bellRef} className={"icon-btn" + (showBadge ? " has-badge" : "")} aria-label="Notifications" onClick={() => setModal({ kind: "changelog" })}><I.Bell size={19} />{showBadge && <span className="badge" />}</button>; })()}
               <button ref={avatarRef} className="icon-btn" aria-label="Account" onClick={() => setPop({ kind: "usermenu", anchor: avatarRef })} style={{ width: 38 }}>
-                <span className="avatar" style={{ width: 30, height: 30 }}>{USER.initials}</span>
+                <span className="avatar" style={{ width: 30, height: 30 }}>{user.initials}</span>
               </button>
             </div>
           </div>
@@ -3255,7 +3289,7 @@ Object.assign(window, {
         {modal && modal.kind === "folder" && <Mo.FolderModal onClose={() => setModal(null)} onCreate={(f) => { setFolders((x) => [...x, f]); setModal(null); toast({ type: "success", title: "Folder created", desc: f.name }); }} />}
         {modal && modal.kind === "import" && <Mo.ImportModal onClose={() => setModal(null)} onToast={toast}
           onImport={(arr) => { setSessions((ss) => [...arr, ...ss]); }} />}
-        {modal && modal.kind === "changelog" && <Mo.ChangelogModal onClose={() => { setModal(null); if (!tour) { setShowTour(true); setTour(true); } }} />}
+        {modal && modal.kind === "changelog" && <Mo.ChangelogModal onSeen={setChangelogSeen} onClose={() => { setModal(null); if (!tour) { setShowTour(true); setTour(true); } }} />}
         {modal && modal.kind === "notes" && <V.Notes onClose={() => setModal(null)} />}
         {modal && modal.kind === "projects" && <Hub.Projects projects={projects} setProjects={setProjects} onClose={() => setModal(null)} onToast={toast} onStartChat={startProjectChat} />}
         {modal && modal.kind === "agents" && <Hub.Agents agents={agents} setAgents={setAgents} models={D.MODELS} onClose={() => setModal(null)} onToast={toast} onStartChat={startAgentChat} />}
@@ -3279,7 +3313,7 @@ Object.assign(window, {
             onClose={() => setPop(null)} onPick={pickModel} onSetDefault={(m) => { setDefaultModel(m); toast({ type: "success", title: "Default model set" }); }} />
         )}
         {pop && pop.kind === "usermenu" && (
-          <Mo.UserMenu anchorRef={pop.anchor} user={USER} theme={theme} onClose={() => setPop(null)}
+          <Mo.UserMenu anchorRef={pop.anchor} user={user} theme={theme} onClose={() => setPop(null)}
             onSettings={() => setModal({ kind: "settings" })} onShortcuts={() => setModal({ kind: "shortcuts" })}
             onAbout={() => setModal({ kind: "about" })} onTheme={setTheme} onSignOut={() => setModal({ kind: "signout" })} />
         )}
