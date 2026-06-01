@@ -2832,7 +2832,17 @@ Object.assign(window, {
         return added;
       }).catch(() => { if (announce) toast({ type: "error", title: "Import failed" }); return 0; });
     }, []);
-    useEffect(() => { if (!localStorage.getItem("ab_hermes_imported")) { importAgentChats(true).finally(() => localStorage.setItem("ab_hermes_imported", "1")); } }, []);
+    useEffect(() => {
+      if (localStorage.getItem("ab_hermes_imported")) return;
+      Promise.all([
+        importAgentChats(true),
+        fetch("/api/import/providers", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+          .then((r) => r.json()).then((d) => {
+            const n = (d.imported || []).length;
+            if (n) toast({ type: "success", title: "Imported " + n + " provider key" + (n === 1 ? "" : "s") + " from your agent" });
+          }).catch(() => {}),
+      ]).finally(() => localStorage.setItem("ab_hermes_imported", "1"));
+    }, []);
     const [suggestions] = useState(() => D.pickSuggestions());
 
     // load enabled models from backend on mount + expose a refresher

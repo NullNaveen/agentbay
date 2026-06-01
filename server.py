@@ -402,6 +402,61 @@ def read_agent_sessions(limit=400):
     return out[:limit]
 
 
+# map a co-located agent's provider names → AgentBay provider ids
+_AGENT_PROV_MAP = {"deepseek": "deepseek", "openai": "openai", "anthropic": "anthropic",
+                   "claude": "anthropic", "gemini": "gemini", "google": "gemini",
+                   "groq": "groq", "openrouter": "openrouter", "mistral": "mistral",
+                   "nous": "nous", "nousresearch": "nous"}
+
+
+def _agent_config_files():
+    home = Path.home()
+    cands = [home.parent / "config.yaml", home / ".hermes" / "config.yaml", home / "config.yaml"]
+    he = os.environ.get("HERMES_CONFIG_PATH")
+    if he:
+        cands.insert(0, Path(he))
+    seen, out = set(), []
+    for c in cands:
+        if str(c) not in seen and c.is_file():
+            seen.add(str(c)); out.append(c)
+    return out
+
+
+def read_agent_providers():
+    """Read provider API keys a co-located agent already has configured, so we can
+    import them. Keys only — we don't auto-enable raw models (the agent stays the
+    default experience). Needs PyYAML; returns {} gracefully if unavailable."""
+    try:
+        import yaml
+    except Exception:
+        return {}
+    found = {}
+
+    def consider(name, pc):
+        if not isinstance(pc, dict):
+            return
+        pid = _AGENT_PROV_MAP.get(str(name).lower())
+        key = pc.get("api_key")
+        if pid and key and str(key).lower() not in ("ollama", "none", "", "null"):
+            found.setdefault(pid, {"key": key, "base_url": pc.get("base_url", "")})
+
+    for cf in _agent_config_files():
+        try:
+            cfg = yaml.safe_load(cf.read_text()) or {}
+        except Exception:
+            continue
+        if not isinstance(cfg, dict):
+            continue
+        m = cfg.get("model")
+        if isinstance(m, dict) and m.get("provider"):
+            consider(m["provider"], m)
+        provs = cfg.get("providers")
+        if isinstance(provs, dict):
+            for hname, pc in provs.items():
+                consider(hname, pc)
+    return found
+
+
 # ---- OS / agent detection -------------------------------------------------
 def detect_os():
     sysname = platform.system().lower()  # darwin / linux / windows
@@ -1270,6 +1325,23 @@ class Handler(BaseHTTPRequestHandler):
                                 key_override=data.get("key") or data.get("deepseek_key"),
                                 base_override=data.get("base_url"))
             return self._send(200, res)
+        if path == "/api/import/providers":
+            found = read_agent_providers()
+            cfg = load_config()
+            updates, imported = {"providers": {}}, []
+            for pid, info in found.items():
+                if pid not in PROVIDERS:
+                    continue
+                if cfg.get("providers", {}).get(pid, {}).get("key"):
+                    continue   # don't clobber a key the user already set here
+                entry = {"key": info["key"]}
+                if info.get("base_url"):
+                    entry["base_url"] = info["base_url"]
+                updates["providers"][pid] = entry   # key only — not enabled in the picker
+                imported.append(pid)
+            if imported:
+                save_config(updates)
+            return self._send(200, {"imported": imported})
         if path == "/api/extract":
             name = data.get("name") or "file"
             b64 = data.get("b64") or ""
