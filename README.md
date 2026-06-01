@@ -27,6 +27,16 @@ python3 server.py
 
 It starts a local server and opens `http://127.0.0.1:8700`.
 
+### No terminal? Just double-click
+
+Inside the folder there are ready-made launchers — no commands to type:
+
+- **macOS** — double-click **`AgentBay.command`** (first time: right-click → Open → Open).
+- **Windows** — double-click **`AgentBay.bat`**.
+- **Linux** — run **`bash start.sh`** (or mark it executable and double-click → Run).
+
+Each one starts AgentBay and opens it in your browser. Only Python 3 is needed.
+
 ## What it does
 
 - **Pick a model** — OpenAI, Claude, or DeepSeek with your API key, or a local
