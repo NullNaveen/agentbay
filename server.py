@@ -460,16 +460,16 @@ def sync_provider_to_gateway(pid, key, base_url=""):
         return False
     if not isinstance(d, dict):
         return False
-    name, api_type = nt
+    name, _api_type = nt
+    base_url = base_url or PROVIDERS.get(pid, {}).get("base_url", "")
     provs = d.setdefault("providers", {})
     cur = provs.get(name) if isinstance(provs.get(name), dict) else {}
     if cur.get("api_key") == key and (not base_url or cur.get("base_url") == base_url):
         return False                          # unchanged → no restart needed
     entry = dict(cur)
     entry["api_key"] = key
-    entry["api_type"] = api_type
     if base_url:
-        entry["base_url"] = base_url
+        entry["base_url"] = base_url          # Hermes infers provider type from its name
     provs[name] = entry
     try:
         cf.write_text(yaml.safe_dump(d, sort_keys=False))
