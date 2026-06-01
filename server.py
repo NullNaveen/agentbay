@@ -942,10 +942,67 @@ def _provider_call(spec, base, key, mdl, messages, max_tokens=1024, timeout=120)
     return (d.get("choices", [{}])[0].get("message", {}).get("content", ""), d.get("usage", {}))
 
 
-def chat_complete(cfg, messages, provider=None, model=None):
+# Provider names the Hermes gateway understands as-is (for {model, provider} routing)
+_GATEWAY_PROVIDER_NAMES = {"deepseek", "openai", "anthropic", "gemini", "groq",
+                           "openrouter", "mistral", "nous"}
+
+
+def _agent_gateway(cfg):
+    """The agent gateway to route chat through, if present. The `local` provider
+    that carries an API key IS a Hermes-style agent gateway (its base_url + key).
+    Routing through it makes EVERY model run inside the agent (tools/terminal/skills)
+    instead of as a raw LLM — the same contract the Hermes/OpenClaw web UIs use.
+    Set agent_mode:false in config to force direct provider calls."""
+    if cfg.get("agent_mode") is False:
+        return None
+    loc = cfg.get("providers", {}).get("local", {})
+    base = (loc.get("base_url") or "").rstrip("/")
+    key = loc.get("key") or ""
+    if base and (key or cfg.get("agent_mode") is True):
+        return {"base_url": base, "key": key}
+    return None
+
+
+def _agent_chat(gw, provider, model, messages, session_id=None, timeout=600):
+    """Run a chat turn through the agent gateway: POST /chat/completions with
+    {model, provider} + a session header — the agent picks that provider+model as
+    its brain and runs the full tool loop. (Method confirmed from hermes-webui.)"""
+    conv = [{"role": m["role"], "content": m["content"]} for m in messages
+            if m.get("role") in ("user", "assistant", "system") and m.get("content")]
+    body = {"model": model or "default", "messages": conv, "stream": False}
+    if provider in _GATEWAY_PROVIDER_NAMES:
+        body["provider"] = provider           # gateway routes the agent to this provider
+    headers = {"Content-Type": "application/json"}
+    if gw.get("key"):
+        headers["Authorization"] = f"Bearer {gw['key']}"
+    if session_id:
+        headers["X-Hermes-Session-Id"] = str(session_id)
+        headers["X-Hermes-Session-Key"] = f"agentbay:{session_id}"
+    req = urllib.request.Request(gw["base_url"] + "/chat/completions",
+                                 data=json.dumps(body).encode(), headers=headers)
+    with _urlopen(req, timeout) as r:
+        d = json.loads(r.read())
+    reply = d.get("choices", [{}])[0].get("message", {}).get("content", "")
+    return reply, d.get("usage", {})
+
+
+def chat_complete(cfg, messages, provider=None, model=None, session_id=None):
     pid, spec, p = resolve_provider(cfg, provider)
     base, key = p["base_url"], p["key"]
     mdl = model or p["model"]
+    # ---- Agent routing: every model chats THROUGH the agent (tools), not raw ----
+    gw = _agent_gateway(cfg)
+    if gw and not (pid == "local" and base.rstrip("/") == gw["base_url"] and not gw.get("key")):
+        t0 = time.time()
+        try:
+            reply, usage = _agent_chat(gw, pid, mdl, messages, session_id)
+            return {"reply": reply, "model": mdl, "provider": pid, "agent": True,
+                    "usage": usage, "latency_ms": int((time.time() - t0) * 1000)}
+        except urllib.error.HTTPError as e:
+            return {"error": f"Agent HTTP {e.code}: {e.read().decode('utf-8', 'ignore')[:300]}"}
+        except Exception as e:
+            return {"error": f"Agent error: {e}"}
+    # ---- direct provider call (only when no agent gateway is configured) ----
     if spec["needs_key"] and not key:
         return {"error": f"{spec['label']} API key not set. Add it in Settings → Providers."}
     # Always anchor with the base system prompt; fold any client-supplied
@@ -1359,7 +1416,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/chat":
             cfg = load_config()
             msgs = data.get("messages") or []
-            res = chat_complete(cfg, msgs, provider=data.get("provider"), model=data.get("model"))
+            res = chat_complete(cfg, msgs, provider=data.get("provider"), model=data.get("model"), session_id=data.get("session_id"))
             threading.Thread(target=langfuse_log,
                              args=(msgs, res, res.get("provider"), res.get("model"), res.get("latency_ms")),
                              daemon=True).start()

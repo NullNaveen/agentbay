@@ -3000,7 +3000,7 @@ Object.assign(window, {
       const modelName = rest.join("::");
       fetch("/api/chat", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history, provider: provId || undefined, model: modelName || undefined }),
+        body: JSON.stringify({ messages: history, provider: provId || undefined, model: modelName || undefined, session_id: sessionId }),
       })
         .then((r) => r.json())
         .then((d) => {
