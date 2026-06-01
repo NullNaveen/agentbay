@@ -1043,7 +1043,7 @@ That's a lot of water for a moon smaller than ours.`;
     return (
       <div>
         <h3 style={{ marginBottom: 6 }}>Providers</h3>
-        <p style={{ fontSize: 13, color: "var(--text-3)", marginTop: 0 }}>Pick a provider, paste its key, fetch the live model list, and tick the models you want. Only ticked models appear in the chat model menu. Keys are stored locally (chmod&nbsp;600).</p>
+        <p style={{ fontSize: 13, color: "var(--text-3)", marginTop: 0 }}>Pick a provider, paste its key, fetch the live model list, and tick the models you want. Only ticked models appear in the chat model menu. Keys are stored locally (chmod&nbsp;600). Want models for free? Look for the <span style={{ fontSize: 10.5, fontWeight: 700, color: "var(--green)", border: "1px solid var(--green)", borderRadius: 6, padding: "1px 5px" }}>FREE</span> tag — Nous Portal, Google AI Studio, Groq and OpenRouter all have free tiers.</p>
         {PROV_ORDER.map((pid) => {
           const p = provs[pid], st = status[pid] || {}, av = avail[pid], en = enabled[pid] || [];
           return (
@@ -1052,14 +1052,16 @@ That's a lot of water for a moon smaller than ours.`;
                 <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 650, cursor: "pointer", flex: 1 }}>
                   <input type="radio" name="activeprov" checked={active === pid} onChange={() => setActiveProv(pid)} />
                   {p.label}
+                  {p.free && <span style={{ fontSize: 10.5, fontWeight: 700, color: "var(--green)", border: "1px solid var(--green)", borderRadius: 6, padding: "1px 5px" }}>FREE</span>}
                   {p.key_set && <span style={{ fontSize: 11, color: "var(--green)" }}>● key set</span>}
                   {en.length > 0 && <span style={{ fontSize: 11, color: "var(--text-3)" }}>{en.length} enabled</span>}
                   {active === pid && <span style={{ fontSize: 11, color: "var(--accent-deep)" }}>active</span>}
                 </label>
               </div>
+              {p.free && p.free_note && <p style={{ fontSize: 12, color: "var(--text-3)", margin: "0 0 8px" }}>✨ {p.free_note}</p>}
               {p.needs_key && (
                 <div style={{ marginBottom: 8 }}>
-                  <label className="field-label">API key</label>
+                  <label className="field-label">API key{p.signup_url && <> · <a href={p.signup_url} target="_blank" rel="noreferrer" style={{ color: "var(--accent-deep)" }}>get a key →</a></>}</label>
                   <input className="field" type="password" placeholder={p.key_set ? "•••••• saved — paste to replace" : "paste API key"} value={draft[pid].key} onChange={(e) => upd(pid, "key", e.target.value)} />
                 </div>
               )}
