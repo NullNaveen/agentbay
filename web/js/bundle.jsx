@@ -2813,6 +2813,26 @@ Object.assign(window, {
     const user = React.useMemo(() => buildUser(userName), [userName]);
     const [changelogSeen, setChangelogSeen] = useLocal("ab_changelog_seen", "");
     useEffect(() => { fetch("/api/config").then((r) => r.json()).then((c) => setUserName(c.user_name || "")).catch(() => {}); }, []);
+    // One-time import of existing chats from a co-located agent (Hermes workspace etc.)
+    const importAgentChats = React.useCallback((announce) => {
+      const grpFor = (ts) => { const d = Date.now() - (ts || Date.now()), day = 864e5;
+        return d < day ? "Today" : d < 2 * day ? "Yesterday" : d < 7 * day ? "Previous 7 Days" : d < 30 * day ? "Previous 30 Days" : "Older"; };
+      return fetch("/api/import/sessions").then((r) => r.json()).then((d) => {
+        const imp = (d.sessions || []).filter((s) => s && Array.isArray(s.messages) && s.messages.length);
+        let added = 0;
+        setSessions((ss) => {
+          const have = new Set(ss.map((s) => s.id));
+          const add = imp.filter((s) => !have.has(s.id)).map((s) => ({
+            id: s.id, title: s.title, model: s.model || "", tags: s.tags || ["imported"],
+            pinned: false, updated: s.updated || Date.now(), group: grpFor(s.updated), messages: s.messages }));
+          added = add.length;
+          return add.length ? [...add, ...ss] : ss;
+        });
+        if (announce) toast({ type: added ? "success" : "info", title: added ? ("Imported " + added + " chat" + (added === 1 ? "" : "s")) : "No new chats to import" });
+        return added;
+      }).catch(() => { if (announce) toast({ type: "error", title: "Import failed" }); return 0; });
+    }, []);
+    useEffect(() => { if (!localStorage.getItem("ab_hermes_imported")) { importAgentChats(true).finally(() => localStorage.setItem("ab_hermes_imported", "1")); } }, []);
     const [suggestions] = useState(() => D.pickSuggestions());
 
     // load enabled models from backend on mount + expose a refresher

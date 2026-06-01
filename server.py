@@ -327,6 +327,81 @@ def extract_text(name, data):
     return "", f"{ext or 'binary'} file stored — no text could be extracted"
 
 
+# ---- import existing chats from a local agent (Hermes workspace, etc.) ----
+def _session_dirs():
+    """Where a co-located agent (Hermes / its web UI) keeps chat sessions.
+    AgentBay's HOME is usually a sub-dir of the agent's HERMES_HOME, so we look
+    up a level too."""
+    home = Path.home()
+    cands = [
+        home / "webui" / "sessions",
+        home.parent / "webui" / "sessions",            # HERMES_HOME/webui/sessions
+        home / ".hermes" / "sessions",
+        home / ".hermes" / "webui" / "sessions",
+    ]
+    he = os.environ.get("HERMES_HOME")
+    if he:
+        cands += [Path(he) / "webui" / "sessions", Path(he) / "sessions"]
+    seen, out = set(), []
+    for d in cands:
+        rd = str(d)
+        if rd not in seen and d.is_dir():
+            seen.add(rd); out.append(d)
+    return out
+
+
+def _flatten_content(c):
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):   # content-parts format
+        return "".join(p.get("text", "") for p in c if isinstance(p, dict))
+    return "" if c is None else str(c)
+
+
+def read_agent_sessions(limit=400):
+    """Read chat sessions a local agent left on disk → AgentBay session shape."""
+    out, seen = [], set()
+    for d in _session_dirs():
+        for f in sorted(d.glob("*.json")):
+            try:
+                s = json.loads(f.read_text())
+            except Exception:
+                continue
+            if not isinstance(s, dict):
+                continue
+            msgs = s.get("messages")
+            if not isinstance(msgs, list) or not msgs:
+                continue
+            sid = "hermes-" + str(s.get("session_id") or f.stem)
+            if sid in seen:
+                continue
+            cleaned = []
+            for m in msgs:
+                if not isinstance(m, dict):
+                    continue
+                role = m.get("role")
+                if role not in ("user", "assistant", "system"):
+                    continue
+                text = _flatten_content(m.get("content"))
+                if text.strip():
+                    cleaned.append({"role": role, "content": text})
+            if not cleaned:
+                continue
+            seen.add(sid)
+            ts = s.get("updated_at") or s.get("created_at") or 0
+            out.append({
+                "id": sid,
+                "title": (s.get("title") or "Imported chat").strip() or "Imported chat",
+                "model": s.get("model") or "",
+                "updated": int(float(ts) * 1000) if ts else None,
+                "tags": ["imported"],
+                "imported": True,
+                "messages": cleaned,
+            })
+    out.sort(key=lambda x: x.get("updated") or 0, reverse=True)
+    return out[:limit]
+
+
 # ---- OS / agent detection -------------------------------------------------
 def detect_os():
     sysname = platform.system().lower()  # darwin / linux / windows
@@ -344,7 +419,16 @@ def _extra_bin_dirs():
     dirs = ["/usr/local/bin", "/usr/bin", "/bin", "/opt/homebrew/bin", "/snap/bin",
             str(home / ".local/bin"), str(home / ".hermes/bin"), str(home / "bin"),
             str(home / ".npm-global/bin"), str(home / ".cargo/bin"),
-            str(home / ".bun/bin"), str(home / "go/bin")]
+            str(home / ".bun/bin"), str(home / "go/bin"),
+            # Hermes installer puts its CLI in a venv here (per-user + shared multi-user)
+            str(home / ".hermes/hermes-agent/venv/bin")]
+    # multi-user / shared installs: any /home/*/.hermes venv (e.g. EC2 ubuntu shared)
+    for base in [Path("/home"), Path("/srv/hermes-multi")]:
+        try:
+            dirs += [str(p) for p in base.glob("*/.hermes/hermes-agent/venv/bin")]
+            dirs += [str(p) for p in base.glob("*/*/.hermes/hermes-agent/venv/bin")]
+        except Exception:
+            pass
     # node version managers (nvm / fnm) install global CLIs under per-version bins
     for base in [home / ".nvm/versions/node", home / ".local/share/fnm/node-versions",
                  home / ".fnm/node-versions"]:
@@ -404,6 +488,44 @@ def github_latest_release(repo):
         return {"error": str(e)}
 
 
+def _date_ver(s):
+    m = re.search(r"(20\d\d)\.(\d{1,2})\.(\d{1,2})", s or "")
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
+
+
+def _semver_tokens(s):
+    return re.findall(r"\d+(?:\.\d+){1,3}", s or "")
+
+
+def _update_available(latest, cur):
+    """Conservative: only True when we're confident `latest` is strictly newer.
+
+    Agents like Hermes use date versioning (CLI says '… (2026.5.29)') while the
+    GitHub tag may be 'v2026.5.29.2' — same-day build, NOT an update. Compare by
+    date first (ignoring trailing patch), then fall back to same-family semver."""
+    if not latest:
+        return False
+    dl, dc = _date_ver(latest), _date_ver(cur)
+    if dl and dc:
+        return dl > dc
+    lat = latest.lstrip("vV").strip()
+    cur_tokens = _semver_tokens(cur)
+    if lat in cur_tokens:
+        return False
+
+    def tup(x):
+        try:
+            return tuple(int(n) for n in x.split("."))
+        except Exception:
+            return ()
+    lt = tup(lat)
+    for c in cur_tokens:
+        ct = tup(c)
+        if ct and lt and ct[0] == lt[0]:   # same major family → comparable
+            return lt > ct
+    return False                            # incomparable → don't nag
+
+
 def update_status(agent_id):
     """Compare installed version with the latest GitHub release tag."""
     st = agent_status(agent_id)
@@ -412,9 +534,8 @@ def update_status(agent_id):
     rel = github_latest_release(AGENTS[agent_id]["repo"])
     latest = rel.get("tag")
     cur = st.get("version") or ""
-    # crude: extract trailing version-ish token from each and compare strings
-    avail = bool(latest) and latest.lstrip("v") not in cur
-    return {"installed": True, "current": cur, "latest": latest, "update_available": avail}
+    return {"installed": True, "current": cur, "latest": latest,
+            "update_available": _update_available(latest, cur)}
 
 
 # ---- install / update (background job) ------------------------------------
@@ -974,6 +1095,13 @@ class Handler(BaseHTTPRequestHandler):
         tok = SHARE.get("token")
         if not tok:
             return True
+        # Only the public share tunnel is gated. Local / reverse-proxy (nginx)
+        # access is already protected and must never be locked out by a share —
+        # otherwise starting a share blocks the normal users on the nginx URL.
+        share_host = urllib.parse.urlparse(SHARE.get("url") or "").netloc.lower()
+        req_host = (self.headers.get("Host") or "").split(",")[0].strip().lower()
+        if share_host and req_host and req_host != share_host:
+            return True
         k = self._share_token_in_query()
         if k and secrets.compare_digest(k, tok):
             return True
@@ -1044,6 +1172,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, {"error": "unknown agent"})
         if path == "/api/enabled-models":
             return self._send(200, {"models": enabled_models(load_config())})
+        if path == "/api/import/sessions":
+            try:
+                return self._send(200, {"sessions": read_agent_sessions()})
+            except Exception as e:
+                return self._send(200, {"sessions": [], "error": str(e)})
         if path == "/api/skills":
             # ask the active backend for its skills (Hermes gateway exposes /skills).
             # graceful empty for plain LLM providers.
