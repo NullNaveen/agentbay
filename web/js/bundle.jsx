@@ -1776,6 +1776,7 @@ That's a lot of water for a moon smaller than ours.`;
 
   /* ---------- S23 changelog ---------- */
   const CHANGELOG_LATEST = "3.0.1";
+  window.CHANGELOG_LATEST = CHANGELOG_LATEST;   // shared with the App IIFE (separate scope)
   function ChangelogModal({ onClose, onSeen }) {
     const [dontShow, setDontShow] = React.useState(false);
     const close = () => { onSeen && onSeen(dontShow ? "ALL" : CHANGELOG_LATEST); onClose(); };
@@ -3241,7 +3242,7 @@ Object.assign(window, {
             <div className="tb-spacer" />
             <div className="right">
               <button ref={settingsRef} className="icon-btn" aria-label="Settings" onClick={() => setModal({ kind: "settings" })}><I.Settings size={19} /></button>
-              {(() => { const showBadge = changelogSeen !== "ALL" && changelogSeen !== CHANGELOG_LATEST;
+              {(() => { const showBadge = changelogSeen !== "ALL" && changelogSeen !== window.CHANGELOG_LATEST;
                 return <button ref={bellRef} className={"icon-btn" + (showBadge ? " has-badge" : "")} aria-label="Notifications" onClick={() => setModal({ kind: "changelog" })}><I.Bell size={19} />{showBadge && <span className="badge" />}</button>; })()}
               <button ref={avatarRef} className="icon-btn" aria-label="Account" onClick={() => setPop({ kind: "usermenu", anchor: avatarRef })} style={{ width: 38 }}>
                 <span className="avatar" style={{ width: 30, height: 30 }}>{user.initials}</span>
