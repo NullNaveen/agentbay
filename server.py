@@ -402,6 +402,96 @@ def read_agent_sessions(limit=400):
     return out[:limit]
 
 
+# AgentBay provider id -> (gateway provider name, api_type) for writing into the agent config
+_AGENT_PROV_OUT = {
+    "deepseek": ("deepseek", "openai_compatible"),
+    "openai": ("openai", "openai_compatible"),
+    "anthropic": ("anthropic", "anthropic"),
+    "gemini": ("gemini", "openai_compatible"),
+    "groq": ("groq", "openai_compatible"),
+    "openrouter": ("openrouter", "openai_compatible"),
+    "mistral": ("mistral", "openai_compatible"),
+    "nous": ("nous", "openai_compatible"),
+}
+
+
+def _gateway_profile():
+    """The hermes gateway systemd-instance / profile name for this AgentBay."""
+    p = os.environ.get("AGENTBAY_PROFILE") or os.environ.get("HERMES_PROFILE")
+    if p:
+        return p
+    home = Path.home()
+    if home.name == "agentbay-home":
+        return home.parent.name              # /srv/hermes-multi/<profile>/agentbay-home
+    he = os.environ.get("HERMES_HOME")
+    if he:
+        return Path(he).name
+    return None
+
+
+def _gateway_config_path():
+    he = os.environ.get("HERMES_CONFIG_PATH")
+    if he and Path(he).is_file():
+        return Path(he)
+    for c in [Path.home().parent / "config.yaml", Path.home() / ".hermes" / "config.yaml"]:
+        if c.is_file():
+            return c
+    return None
+
+
+def sync_provider_to_gateway(pid, key, base_url=""):
+    """Write an AgentBay-added provider's creds into the agent gateway's config so
+    the agent can use that provider's models. Returns True when the config changed."""
+    if not key:
+        return False
+    nt = _AGENT_PROV_OUT.get(pid)
+    if not nt:
+        return False
+    try:
+        import yaml
+    except Exception:
+        return False
+    cf = _gateway_config_path()
+    if not cf:
+        return False
+    try:
+        d = yaml.safe_load(cf.read_text()) or {}
+    except Exception:
+        return False
+    if not isinstance(d, dict):
+        return False
+    name, api_type = nt
+    provs = d.setdefault("providers", {})
+    cur = provs.get(name) if isinstance(provs.get(name), dict) else {}
+    if cur.get("api_key") == key and (not base_url or cur.get("base_url") == base_url):
+        return False                          # unchanged → no restart needed
+    entry = dict(cur)
+    entry["api_key"] = key
+    entry["api_type"] = api_type
+    if base_url:
+        entry["base_url"] = base_url
+    provs[name] = entry
+    try:
+        cf.write_text(yaml.safe_dump(d, sort_keys=False))
+        return True
+    except Exception:
+        return False
+
+
+def restart_gateway():
+    """Restart the agent gateway so it loads newly-synced providers.
+    Relies on a passwordless sudoers rule for `systemctl restart hermes-gateway@*`."""
+    prof = _gateway_profile()
+    if not prof:
+        return False
+    try:
+        subprocess.Popen(["sudo", "-n", "systemctl", "restart", f"hermes-gateway@{prof}.service"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except Exception:
+        return False
+
+
 # map a co-located agent's provider names → AgentBay provider ids
 _AGENT_PROV_MAP = {"deepseek": "deepseek", "openai": "openai", "anthropic": "anthropic",
                    "claude": "anthropic", "gemini": "gemini", "google": "gemini",
@@ -1364,7 +1454,17 @@ class Handler(BaseHTTPRequestHandler):
                 if pu:
                     updates["providers"] = pu
             cfg = save_config(updates)
-            return self._send(200, public_config(cfg))
+            # If a provider KEY was added/changed, push it into the agent gateway so
+            # the agent can use that provider's models, then restart the gateway once.
+            changed = False
+            for _pid, _vals in (updates.get("providers") or {}).items():
+                if _vals.get("key") and _agent_gateway(cfg):
+                    if sync_provider_to_gateway(_pid, _vals["key"], _vals.get("base_url", "")):
+                        changed = True
+            restarted = restart_gateway() if changed else False
+            res = public_config(cfg)
+            res["gateway_restarting"] = restarted
+            return self._send(200, res)
         if path in ("/api/install", "/api/update"):
             agent = data.get("agent")
             if agent not in AGENTS:
