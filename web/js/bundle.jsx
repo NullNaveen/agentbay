@@ -1925,7 +1925,7 @@ That's a lot of water for a moon smaller than ours.`;
   /* ---------- S24 onboarding tour ---------- */
   const TOUR_STEPS = [
     { sel: ".composer", title: "Ask anything", body: "Type your question here and press Enter. Shift+Enter adds a new line.", place: "top" },
-    { sel: ".model-pill", title: "Pick a model", body: "Switch between Hermes models any time — Fast for quick answers, Reason for hard problems.", place: "bottom" },
+    { sel: ".model-pill", title: "Pick a model", body: "Every model here runs through your agent — with tools (terminal, web, files) — using that model as its brain. You're never talking to a plain chatbot.", place: "bottom" },
     { sel: ".sb-new", title: "Your chats live here", body: "Start fresh with New Chat. Past conversations are grouped by date in the sidebar.", place: "right" },
     { sel: ".topbar .right .icon-btn", title: "Settings & more", body: "Open settings to change the theme, turn off animations, and more.", place: "bottom" },
   ];
