@@ -7,9 +7,13 @@ $Port   = if ($env:AGENTBAY_PORT) { $env:AGENTBAY_PORT } else { "8700" }
 
 function Say($m){ Write-Host "[agentbay] $m" -ForegroundColor Yellow }
 
-# 1. need python
-$py = (Get-Command python -ErrorAction SilentlyContinue) ?? (Get-Command python3 -ErrorAction SilentlyContinue)
-if (-not $py) { Write-Error "Python 3 is required. Install from https://python.org and re-run."; exit 1 }
+# 1. need python  (PowerShell 5.1-compatible: no ?? operator)
+$py = $null
+foreach ($cmd in @("py","python","python3")) {
+  $c = Get-Command $cmd -ErrorAction SilentlyContinue
+  if ($c) { $py = $c; break }
+}
+if (-not $py) { Write-Error "Python 3 is required. Install from https://python.org (tick 'Add to PATH') and re-run."; exit 1 }
 
 # 2. fetch / update
 New-Item -ItemType Directory -Force -Path (Split-Path $AppDir) | Out-Null
