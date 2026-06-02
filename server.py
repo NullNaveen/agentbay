@@ -1537,8 +1537,17 @@ def _zip_update(log):
 
 def _is_ec2_shared():
     """The EC2 multi-user layout: a shared root-owned /opt/agentbay checkout run by
-    per-user systemd services. Detected by the profile env + a self-update script."""
-    return bool(os.environ.get("AGENTBAY_PROFILE")) and (ROOT / "tools" / "ec2-self-update.sh").exists()
+    per-user systemd services. We can't pull/restart it as our own user, so we go
+    through the sudoers-backed self-update script. Trigger when that script exists
+    and either the profile env is set or ROOT isn't writable by us."""
+    if not (ROOT / "tools" / "ec2-self-update.sh").exists():
+        return False
+    if os.environ.get("AGENTBAY_PROFILE"):
+        return True
+    try:
+        return not os.access(str(ROOT), os.W_OK)
+    except Exception:
+        return False
 
 
 def run_app_update(job_id):
