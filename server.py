@@ -988,6 +988,21 @@ def _extra_bin_dirs():
             dirs += [str(d) for d in base.glob("*/installation/bin")]
         except Exception:
             pass
+    # Windows install locations (Hermes → %LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts;
+    # npm globals like OpenClaw → %APPDATA%\npm)
+    if os.name == "nt":
+        la = os.environ.get("LOCALAPPDATA", str(home / "AppData" / "Local"))
+        ad = os.environ.get("APPDATA", str(home / "AppData" / "Roaming"))
+        dirs += [
+            str(Path(la) / "hermes" / "hermes-agent" / "venv" / "Scripts"),
+            str(Path(la) / "Programs" / "hermes"),
+            str(Path(la) / "Programs" / "openclaw"),
+            str(Path(ad) / "npm"),
+        ]
+        try:                       # nvm-windows per-version dirs
+            dirs += [str(p) for p in (Path(ad) / "nvm").glob("v*")]
+        except Exception:
+            pass
     try:
         dirs.append(str(BIN_DIR))   # AgentBay's own tool dir
     except Exception:
@@ -1515,12 +1530,47 @@ _GATEWAY_PROVIDER_NAMES = {"deepseek", "openai", "anthropic", "gemini", "groq",
                            "openrouter", "mistral", "nous"}
 
 
+# A locally-installed Hermes serves an OpenAI-compatible agent API (model id
+# "hermes-agent") on 127.0.0.1:8642 by default. We probe it (cached) so a
+# standalone install "just works" as an agent without the user wiring anything.
+_LOCAL_GW = {"url": None, "key": "", "ts": 0.0}
+
+
+def _local_gateway_base():
+    """Env-overridable base of the local Hermes gateway's OpenAI API (…/v1)."""
+    b = (os.environ.get("HERMES_GATEWAY_BASE_URL") or "http://127.0.0.1:8642").rstrip("/")
+    return b if b.endswith("/v1") else b + "/v1"
+
+
+def detect_local_gateway(timeout=1.2, ttl=20):
+    """Probe the local Hermes gateway; cache the result briefly. Returns
+    {base_url, key} if a Hermes agent API is reachable, else None."""
+    now = time.time()
+    if now - _LOCAL_GW["ts"] < ttl:
+        return ({"base_url": _LOCAL_GW["url"], "key": _LOCAL_GW["key"]} if _LOCAL_GW["url"] else None)
+    base = _local_gateway_base()
+    key = os.environ.get("API_SERVER_KEY", "") or os.environ.get("HERMES_WEBUI_GATEWAY_API_KEY", "")
+    found = None
+    try:
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
+        req = urllib.request.Request(base + "/models", headers=headers)
+        d = json.loads(_urlopen(req, timeout).read())
+        ids = [m.get("id", "") for m in d.get("data", []) if isinstance(m, dict)]
+        if any(("hermes" in i.lower() or "agent" in i.lower()) for i in ids):
+            found = base
+    except Exception:
+        found = None
+    _LOCAL_GW.update({"url": found, "key": key if found else "", "ts": now})
+    return ({"base_url": found, "key": key} if found else None)
+
+
 def _agent_gateway(cfg):
-    """The agent gateway to route chat through, if present. The `local` provider
-    that carries an API key IS a Hermes-style agent gateway (its base_url + key).
+    """The agent gateway to route chat through, if present. Two ways it's found:
+      1. A `local` provider configured with a base_url (+ optional key) — the
+         multi-user EC2 setup points this at the per-user gateway.
+      2. Auto-detected: a Hermes gateway running locally on 127.0.0.1:8642.
     Routing through it makes EVERY model run inside the agent (tools/terminal/skills)
-    instead of as a raw LLM — the same contract the Hermes/OpenClaw web UIs use.
-    Set agent_mode:false in config to force direct provider calls."""
+    instead of as a raw LLM. Set agent_mode:false in config to force direct calls."""
     if cfg.get("agent_mode") is False:
         return None
     loc = cfg.get("providers", {}).get("local", {})
@@ -1528,7 +1578,32 @@ def _agent_gateway(cfg):
     key = loc.get("key") or ""
     if base and (key or cfg.get("agent_mode") is True):
         return {"base_url": base, "key": key}
-    return None
+    # Fallback: a locally-installed Hermes serving its agent API. This is what
+    # makes a fresh standalone install behave as the agent, not a plain chatbot.
+    return detect_local_gateway()
+
+
+_GW_START = {"tried": False}
+
+
+def ensure_local_gateway():
+    """If Hermes is installed but its agent API isn't up yet, start it in the
+    background (best-effort) so a standalone install behaves as the agent without
+    the user running a command. On macOS/Linux `gateway start` installs+starts the
+    launchd/systemd service; on other setups it's a no-op the user can do manually."""
+    if _GW_START["tried"]:
+        return
+    _GW_START["tried"] = True
+    try:
+        if detect_local_gateway(ttl=0):
+            return                                  # already reachable
+        hb = which("hermes")
+        if not hb:
+            return
+        subprocess.Popen([hb, "gateway", "start"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
 
 
 def _agent_chat(gw, provider, model, messages, session_id=None, timeout=600):
@@ -1543,7 +1618,11 @@ def _agent_chat(gw, provider, model, messages, session_id=None, timeout=600):
     headers = {"Content-Type": "application/json"}
     if gw.get("key"):
         headers["Authorization"] = f"Bearer {gw['key']}"
-    if session_id:
+    # Session continuation headers require API-key auth on the gateway. Only send
+    # them when we have a key (the EC2 multi-user setup); an unauthenticated
+    # localhost gateway 403s on them. Without them each turn is stateless, which is
+    # fine — AgentBay sends the full message history every turn anyway.
+    if session_id and gw.get("key"):
         headers["X-Hermes-Session-Id"] = str(session_id)
         headers["X-Hermes-Session-Key"] = f"agentbay:{session_id}"
     req = urllib.request.Request(gw["base_url"] + "/chat/completions",
@@ -2056,6 +2135,9 @@ def main():
     # Non-git installs (zip/tarball) carry no HEAD to compare against — record the
     # current upstream commit once so the in-app "update available" check works.
     threading.Thread(target=baseline_build_marker, daemon=True).start()
+    # If a local Hermes is installed, make sure its agent API is up so chat runs
+    # through the agent (tools) instead of as a plain chatbot.
+    threading.Thread(target=ensure_local_gateway, daemon=True).start()
 
     # Onboarding: make the share-link tool available on every machine (any OS).
     # One-time, in the background, only if missing — so "Remote access" just works.

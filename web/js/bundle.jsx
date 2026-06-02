@@ -327,6 +327,21 @@ That's a lot of water for a moon smaller than ours.`;
         html += `<div class="codeblock"><div class="codeblock-head"><span>${lang}</span><button class="copy-float" data-copy="${id}"><span class="cf-ic"></span><span class="cf-tx">Copy</span></button></div><pre><code id="${id}" class="language-${lang}">${code}</code></pre></div>`;
         continue;
       }
+      // GFM table: a header row of cells, then a |---|:--:| separator, then body rows
+      if (line.includes("|") && i + 1 < lines.length
+          && /^\s*\|?[\s:|-]*-[\s:|-]*\|[\s:|-]*$/.test(lines[i + 1])) {
+        const cells = (r) => { let t = r.trim(); if (t.startsWith("|")) t = t.slice(1); if (t.endsWith("|")) t = t.slice(0, -1); return t.split("|").map((c) => c.trim()); };
+        const headers = cells(line);
+        const aligns = cells(lines[i + 1]).map((s) => { const l = s.startsWith(":"), r = s.endsWith(":"); return (l && r) ? "center" : r ? "right" : l ? "left" : ""; });
+        i += 2;
+        const body = [];
+        while (i < lines.length && lines[i].includes("|") && lines[i].trim() !== "") { body.push(cells(lines[i])); i++; }
+        const al = (ci) => aligns[ci] ? ` style="text-align:${aligns[ci]}"` : "";
+        const thead = "<thead><tr>" + headers.map((c, ci) => `<th${al(ci)}>${inline(c)}</th>`).join("") + "</tr></thead>";
+        const tbody = "<tbody>" + body.map((row) => "<tr>" + headers.map((_, ci) => `<td${al(ci)}>${inline(row[ci] || "")}</td>`).join("") + "</tr>").join("") + "</tbody>";
+        html += `<div class="md-table"><table>${thead}${tbody}</table></div>`;
+        continue;
+      }
       // headings
       const h = line.match(/^(#{1,3})\s+(.*)/);
       if (h) { const lvl = h[1].length; html += `<h${lvl}>${inline(h[2])}</h${lvl}>`; i++; continue; }
