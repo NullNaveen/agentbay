@@ -736,16 +736,20 @@ That's a lot of water for a moon smaller than ours.`;
     return (
       <div className="turn assistant anim-fadeup">
         <div className="assistant-head">
-          <span className={"am-icon" + (streaming ? " thinking" : "")}><window.HermesGlyph size={17} /></span>
-          <span className="am-name">{meta.name}</span>
+          {streaming && !msg.content ? (
+            <window.Mascot label="Thinking" />
+          ) : (
+            <>
+              <span className="am-icon"><window.HermesGlyph size={17} /></span>
+              <span className="am-name">{meta.name}</span>
+            </>
+          )}
           {showTimestamps && msg.ts && <span className="ts">{msg.ts}</span>}
         </div>
 
         {msg.thought ? <Activity seconds={msg.thought} /> : null}
 
-        {streaming && !msg.content ? (
-          <div style={{ padding: "2px 0 6px" }}><window.Mascot label="Thinking" /></div>
-        ) : (
+        {streaming && !msg.content ? null : (
           <div className="md" dangerouslySetInnerHTML={{ __html: D.renderMarkdown(msg.content) }} />
         )}
 
