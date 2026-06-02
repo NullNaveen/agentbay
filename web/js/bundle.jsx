@@ -300,7 +300,7 @@ That's a lot of water for a moon smaller than ours.`;
 
   function inline(s) {
     s = esc(s);
-    s = s.replace(/\$\$(.+?)\$\$/g, (_, m) => `<span class="math">${m}</span>`);
+    // math is left intact for KaTeX auto-render ($$…$$, \[…\], \(…\)) — see enhanceRich
     s = s.replace(/`([^`]+)`/g, (_, m) => `<code>${m}</code>`);
     s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
     s = s.replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
@@ -378,9 +378,36 @@ That's a lot of water for a moon smaller than ours.`;
     return html;
   }
 
+  // Post-render enhancement: syntax-highlight code + typeset math. Runs after the
+  // markdown HTML is in the DOM; retries briefly while the CDN libs finish loading.
+  function enhanceRich(el) {
+    if (!el || !el.isConnected) return;
+    let ready = true;
+    try {
+      if (window.hljs) {
+        el.querySelectorAll("pre code").forEach((b) => {
+          if (!b.dataset.hl) { try { window.hljs.highlightElement(b); } catch (e) {} b.dataset.hl = "1"; }
+        });
+      } else { ready = false; }
+    } catch (e) {}
+    try {
+      if (window.renderMathInElement) {
+        window.renderMathInElement(el, {
+          delimiters: [
+            { left: "$$", right: "$$", display: true },
+            { left: "\\[", right: "\\]", display: true },
+            { left: "\\(", right: "\\)", display: false },
+          ],
+          throwOnError: false, ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code"],
+        });
+      } else { ready = false; }
+    } catch (e) {}
+    if (!ready) setTimeout(() => enhanceRich(el), 400);   // libs still loading
+  }
+
   window.HermesData = {
     MODELS, SUGGESTIONS, SEED, GROUP_ORDER, refreshModels, PROVIDER_ICON,
-    pickSuggestions, generateReply, genFollowups, renderMarkdown,
+    pickSuggestions, generateReply, genFollowups, renderMarkdown, enhanceRich,
   };
 })();
 
@@ -756,6 +783,9 @@ That's a lot of water for a moon smaller than ours.`;
     const Ic = I[meta.icon] || I.Bot;
     const [vote, setVote] = useState(0);
     const [listening, setListening] = useState(false);
+    const mdRef = useRef(null);
+    // syntax-highlight code + typeset math once the reply has settled
+    useEffect(() => { if (!streaming && mdRef.current) D.enhanceRich(mdRef.current); }, [msg.content, streaming]);
 
     const copy = () => { navigator.clipboard && navigator.clipboard.writeText(msg.content); onToast({ type: "success", title: "Copied to clipboard" }); };
     const listen = () => {
@@ -784,7 +814,7 @@ That's a lot of water for a moon smaller than ours.`;
         {msg.thought ? <Activity seconds={msg.thought} /> : null}
 
         {streaming && !msg.content ? null : (
-          <div className="md" dangerouslySetInnerHTML={{ __html: D.renderMarkdown(msg.content) }} />
+          <div className="md" ref={mdRef} dangerouslySetInnerHTML={{ __html: D.renderMarkdown(msg.content) }} />
         )}
 
         {streaming && msg.content ? <span className="typing" style={{ marginTop: 4 }}><span/><span/><span/></span> : null}
@@ -3324,6 +3354,9 @@ Object.assign(window, {
         if (theme === "white") t = "light";
         if (theme === "system") t = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
         document.documentElement.setAttribute("data-theme", t);
+        // match the code-highlight theme to light/dark so syntax colors stay readable
+        const hl = document.getElementById("hljs-light"), hd = document.getElementById("hljs-dark");
+        if (hl && hd) { hl.disabled = (t === "dark"); hd.disabled = (t !== "dark"); }
       };
       apply();
       const mq = window.matchMedia("(prefers-color-scheme: dark)");

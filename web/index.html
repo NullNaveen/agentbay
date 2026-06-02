@@ -14,6 +14,15 @@
 
   <link rel="stylesheet" href="/static/css/app.css" />
 
+  <!-- Rich content: syntax highlighting (highlight.js) + math (KaTeX). Loaded
+       async/defer; renderMarkdown enhances code + math once they're available. -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+  <link id="hljs-light" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/styles/github.min.css" />
+  <link id="hljs-dark" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/styles/github-dark.min.css" disabled />
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/highlight.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+
   <template id="__bundler_thumbnail" data-bg-color="#faf2e8">
     <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
       <rect width="100" height="100" rx="22" fill="#faf2e8"/>
