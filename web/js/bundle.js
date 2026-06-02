@@ -3491,7 +3491,32 @@ That's a lot of water for a moon smaller than ours.`;
       on: s.codeBlocks,
       onChange: v => set("codeBlocks", v),
       label: "Render code"
-    }))), tab === "interface" && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h3", {
+    })), /*#__PURE__*/React.createElement(Row, {
+      t: "Desktop shortcut",
+      d: "Add an AgentBay icon to your Desktop and apps menu \u2014 click it to open AgentBay, no terminal."
+    }, /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-outline",
+      onClick: () => {
+        fetch("/api/shortcut", {
+          method: "POST"
+        }).then(r => r.json()).then(d => {
+          onToast(d.ok ? {
+            type: "success",
+            title: "Shortcut added",
+            desc: "Look for AgentBay on your Desktop / apps menu."
+          } : {
+            type: "error",
+            title: "Couldn't add shortcut",
+            desc: d.error || ""
+          });
+        }).catch(() => onToast({
+          type: "error",
+          title: "Couldn't add shortcut"
+        }));
+      }
+    }, /*#__PURE__*/React.createElement(I.Download, {
+      size: 15
+    }), " Add to Desktop"))), tab === "interface" && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h3", {
       style: {
         marginBottom: 18
       }

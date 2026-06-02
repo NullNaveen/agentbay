@@ -2127,6 +2127,8 @@ class Handler(BaseHTTPRequestHandler):
                                 key_override=data.get("key") or data.get("deepseek_key"),
                                 base_override=data.get("base_url"))
             return self._send(200, res)
+        if path == "/api/shortcut":
+            return self._send(200, create_desktop_launcher(force=True))
         if path == "/api/sessions":
             return self._send(200, merge_sessions(data.get("sessions") or []))
         if path == "/api/sessions/delete":
@@ -2194,6 +2196,115 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, p.read_bytes(), ctype)
 
 
+# ---- one-click desktop launcher (no terminal needed) ----------------------
+_SHORTCUT_FLAG = CONFIG_DIR / ".shortcut_done"
+
+
+def _launcher_python():
+    """Prefer a GUI python (pythonw on Windows) so no console window flashes."""
+    exe = sys.executable or "python3"
+    if os.name == "nt":
+        cand = Path(exe).with_name("pythonw.exe")
+        if cand.exists():
+            return str(cand)
+    return exe
+
+
+def create_desktop_launcher(force=False):
+    """Create a clickable launcher (Desktop + app menu) so non-technical users can
+    open AgentBay without a terminal. Idempotent; safe to call on every start.
+    Returns {ok, where:[...], error?}."""
+    try:
+        sysname = platform.system().lower()
+        launch_py = str(ROOT / "launch.py")
+        py = _launcher_python()
+        home = Path.home()
+        where = []
+
+        if sysname == "darwin":
+            app = home / "Applications" / "AgentBay.app"
+            (app / "Contents" / "MacOS").mkdir(parents=True, exist_ok=True)
+            (app / "Contents" / "Resources").mkdir(parents=True, exist_ok=True)
+            icns = WEB / "icon.icns"
+            if icns.exists():
+                shutil.copy2(icns, app / "Contents" / "Resources" / "icon.icns")
+            (app / "Contents" / "Info.plist").write_text(
+                '<?xml version="1.0" encoding="UTF-8"?>\n'
+                '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+                '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+                '<plist version="1.0"><dict>'
+                '<key>CFBundleName</key><string>AgentBay</string>'
+                '<key>CFBundleDisplayName</key><string>AgentBay</string>'
+                '<key>CFBundleIdentifier</key><string>com.agentbay.launcher</string>'
+                '<key>CFBundleVersion</key><string>1.0</string>'
+                '<key>CFBundlePackageType</key><string>APPL</string>'
+                '<key>CFBundleExecutable</key><string>AgentBay</string>'
+                '<key>CFBundleIconFile</key><string>icon.icns</string>'
+                '<key>LSUIElement</key><true/>'
+                '</dict></plist>\n')
+            sh = (app / "Contents" / "MacOS" / "AgentBay")
+            sh.write_text('#!/bin/bash\nexec %s "%s"\n' % (_shq(py), launch_py))
+            os.chmod(sh, 0o755)
+            where.append(str(app))
+
+        elif sysname == "windows":
+            # Build Desktop + Start Menu .lnk via PowerShell's WScript.Shell.
+            ico = WEB / "icon.ico"
+            desktop = home / "Desktop"
+            startmenu = Path(os.environ.get("APPDATA", str(home / "AppData" / "Roaming"))) \
+                / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+            targets = [p for p in (desktop, startmenu) if p.exists() or p == startmenu]
+            ps_lines = ["$W = New-Object -ComObject WScript.Shell"]
+            for d in targets:
+                d.mkdir(parents=True, exist_ok=True)
+                lnk = str(d / "AgentBay.lnk").replace("'", "''")
+                ps_lines += [
+                    "$s = $W.CreateShortcut('%s')" % lnk,
+                    "$s.TargetPath = '%s'" % py.replace("'", "''"),
+                    "$s.Arguments = '\"%s\"'" % launch_py.replace("'", "''"),
+                    "$s.WorkingDirectory = '%s'" % str(ROOT).replace("'", "''"),
+                    "$s.IconLocation = '%s'" % str(ico).replace("'", "''"),
+                    "$s.Description = 'Open AgentBay'",
+                    "$s.Save()",
+                ]
+            subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", "\n".join(ps_lines)],
+                           capture_output=True, timeout=30)
+            where += [str(p / "AgentBay.lnk") for p in targets]
+
+        else:  # linux / *nix
+            png = WEB / "icon-512.png"
+            entry = ("[Desktop Entry]\nType=Application\nName=AgentBay\n"
+                     "Comment=Open AgentBay\n"
+                     "Exec=%s \"%s\"\nIcon=%s\nTerminal=false\nCategories=Utility;\n"
+                     % (_shq(py), launch_py, str(png)))
+            appsdir = home / ".local" / "share" / "applications"
+            appsdir.mkdir(parents=True, exist_ok=True)
+            (appsdir / "agentbay.desktop").write_text(entry)
+            os.chmod(appsdir / "agentbay.desktop", 0o755)
+            where.append(str(appsdir / "agentbay.desktop"))
+            desk = home / "Desktop"
+            if desk.is_dir():
+                (desk / "agentbay.desktop").write_text(entry)
+                try:
+                    os.chmod(desk / "agentbay.desktop", 0o755)
+                except Exception:
+                    pass
+                where.append(str(desk / "agentbay.desktop"))
+
+        try:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            _SHORTCUT_FLAG.write_text("1")
+        except Exception:
+            pass
+        return {"ok": True, "where": where}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def _shq(s):
+    return str(s).replace('"', '\\"')
+
+
 def free_port(host, port):
     # SO_REUSEADDR so a recently-closed server in TIME_WAIT doesn't push us to a
     # random port on restart (matches HTTPServer.allow_reuse_address).
@@ -2226,6 +2337,18 @@ def main():
     # If a local Hermes is installed, make sure its agent API is up so chat runs
     # through the agent (tools) instead of as a plain chatbot.
     threading.Thread(target=ensure_local_gateway, daemon=True).start()
+    # First run on a real desktop: drop a clickable launcher (Desktop / Start Menu /
+    # Applications) so the user never needs a terminal again. Skip on the headless
+    # EC2 multi-user services (AGENTBAY_PROFILE) and Linux boxes with no desktop.
+    def _maybe_shortcut():
+        if _SHORTCUT_FLAG.exists() or os.environ.get("AGENTBAY_PROFILE"):
+            return
+        if platform.system().lower() == "linux" and not (
+                os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+                or (Path.home() / "Desktop").is_dir()):
+            return
+        create_desktop_launcher()
+    threading.Thread(target=_maybe_shortcut, daemon=True).start()
 
     # Onboarding: make the share-link tool available on every machine (any OS).
     # One-time, in the background, only if missing — so "Remote access" just works.

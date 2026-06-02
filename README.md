@@ -30,6 +30,19 @@ busy it picks the next free one and prints the real URL. No Python? The
 installer sets it up for you (winget on Windows, your package manager / Homebrew
 on Linux & macOS).
 
+### Opening it again later — no terminal
+
+The first run drops an **AgentBay icon** where you'd expect it, so you never need
+the terminal again:
+
+- **Windows** — on your **Desktop** and in the **Start Menu**.
+- **macOS** — in **Applications** (and Spotlight / Launchpad).
+- **Linux** — in your **applications menu** and on the Desktop.
+
+Click it to open AgentBay (it starts in the background and opens your browser; if
+it's already running it just brings up the tab). You can re-add the icon any time
+from **Settings → General → Desktop shortcut**.
+
 ## Update
 
 In the app, an **"Update available"** banner appears whenever a new version is on
