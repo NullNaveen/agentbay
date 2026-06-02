@@ -15,6 +15,14 @@
         : React.createElement(d.t, { key: i, ...d.a })
     ));
   };
+  // Filled brand glyph: solid currentColor fill, no stroke.
+  const F = (paths) => function Icon(p) {
+    const { size = 18, ...rest } = p || {};
+    return React.createElement("svg", {
+      width: size, height: size, viewBox: "0 0 24 24", fill: "currentColor",
+      stroke: "none", "aria-hidden": "true", ...rest,
+    }, paths.map((d, i) => React.createElement("path", { key: i, d })));
+  };
   const C = (a) => ({ t: "circle", a });
   const R = (a) => ({ t: "rect", a });
   const L = (a) => ({ t: "line", a });
@@ -94,6 +102,17 @@
     Languages: S(["m5 8 6 6", "m4 14 6-6 2-3", "M2 5h12", "M7 2h1", "m22 22-5-10-5 10", "M14 18h6"]),
     Type: S(["M4 7V4h16v3", "M9 20h6", "M12 4v16"]),
     Bot: S([R({ x: 3, y: 11, width: 18, height: 10, rx: 2 }), C({ cx: 9, cy: 16, r: 1 }), C({ cx: 15, cy: 16, r: 1 }), "M12 7v4", "M8 7h8", C({ cx: 12, cy: 5, r: 2 })]),
+    Mail: S([R({ x: 2, y: 4, width: 20, height: 16, rx: 2 }), "m2 7 10 6 10-6"]),
+    Plug: S(["M9 2v6", "M15 2v6", "M6 8h12v3a6 6 0 0 1-12 0Z", "M12 17v5"]),
+    // ---- Brand glyphs (filled, monochrome via currentColor) ----
+    Telegram: F(["M21.94 4.31 18.9 19.1c-.23 1.01-.83 1.26-1.68.79l-4.65-3.43-2.24 2.16c-.25.25-.46.46-.94.46l.33-4.74 8.63-7.8c.38-.33-.08-.52-.59-.19l-10.66 6.71-4.59-1.44c-1-.31-1.02-1 .21-1.48l17.94-6.92c.83-.31 1.56.19 1.29 1.48Z"]),
+    Discord: F(["M20.32 4.93A19.5 19.5 0 0 0 15.5 3.4l-.24.43c-.83.2-1.6.45-2.32.74-.72-.29-1.49-.54-2.32-.74L8.5 3.4A19.5 19.5 0 0 0 3.68 4.93C.96 8.95.21 12.86.58 16.72A19.7 19.7 0 0 0 6.55 19.7l.7-1.01c-.46-.17-.9-.38-1.32-.62l.33-.24c1.7.79 3.6 1.2 5.74 1.2s4.04-.41 5.74-1.2l.33.24c-.42.24-.86.45-1.32.62l.7 1.01a19.7 19.7 0 0 0 5.97-2.98c.43-4.47-.74-8.35-3.1-11.79ZM9.18 14.6c-.94 0-1.71-.86-1.71-1.91s.76-1.92 1.71-1.92 1.72.87 1.71 1.92c0 1.05-.76 1.91-1.71 1.91Zm5.64 0c-.94 0-1.71-.86-1.71-1.91s.76-1.92 1.71-1.92 1.72.87 1.71 1.92c0 1.05-.76 1.91-1.71 1.91Z"]),
+    Slack: F(["M5.04 14.7a2.1 2.1 0 1 1-2.1-2.1h2.1v2.1Zm1.06 0a2.1 2.1 0 0 1 4.2 0v5.26a2.1 2.1 0 1 1-4.2 0V14.7ZM9.3 5.04a2.1 2.1 0 1 1 2.1-2.1v2.1H9.3Zm0 1.06a2.1 2.1 0 0 1 0 4.2H4.04a2.1 2.1 0 1 1 0-4.2H9.3Zm9.66 4.2a2.1 2.1 0 1 1 2.1 2.1h-2.1v-2.1Zm-1.06 0a2.1 2.1 0 0 1-4.2 0V4.04a2.1 2.1 0 1 1 4.2 0V10.3Zm-3.16 8.66a2.1 2.1 0 1 1-2.1 2.1v-2.1h2.1Zm0-1.06a2.1 2.1 0 0 1 0-4.2h5.26a2.1 2.1 0 1 1 0 4.2H14.7Z"]),
+    WhatsApp: F(["M12.01 2C6.5 2 2.02 6.48 2.02 11.99c0 1.76.46 3.48 1.34 5L2 22l5.13-1.34a9.96 9.96 0 0 0 4.88 1.25h.01c5.5 0 9.98-4.48 9.98-9.99C22 6.48 17.52 2 12.01 2Zm5.84 14.2c-.25.69-1.44 1.32-1.99 1.37-.51.05-1.15.21-3.72-.78-3.13-1.23-5.12-4.42-5.28-4.63-.15-.21-1.26-1.68-1.26-3.2 0-1.52.8-2.27 1.08-2.58.25-.28.55-.35.74-.35.18 0 .37 0 .53.01.17.01.4-.07.62.47.25.6.84 2.08.91 2.23.07.15.12.32.02.52-.1.21-.15.33-.3.51-.15.18-.32.4-.45.54-.15.15-.31.31-.13.62.18.3.79 1.3 1.69 2.11 1.17 1.04 2.15 1.36 2.46 1.51.31.15.49.13.67-.08.18-.21.77-.9.98-1.21.21-.31.41-.25.69-.15.28.1 1.76.83 2.07.98.31.15.51.23.59.36.07.13.07.74-.18 1.43Z"]),
+    GoogleChat: F(["M4 2h13a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-5l-5 4v-4H4a3 3 0 0 1-3-3V5a3 3 0 0 1 3-3Z"]),
+    Signal: F(["M12 1.5a10.5 10.5 0 0 0-8.9 16.06l-1.07 3.3 3.36-1.05A10.5 10.5 0 1 0 12 1.5Zm0 2a8.5 8.5 0 1 1-4.4 15.77l-.4-.24-1.62.5.52-1.58-.25-.4A8.5 8.5 0 0 1 12 3.5Z"]),
+    Matrix: F(["M2 2v20h2v-1H3V3h1V2H2Zm3.6 4.2v11.6h1.9v-6.2c0-1 .5-1.7 1.4-1.7.8 0 1.2.6 1.2 1.6v6.3h1.9v-6.3c0-1 .5-1.6 1.4-1.6.8 0 1.2.5 1.2 1.6v6.3h1.9v-6.8c0-1.9-1-2.9-2.6-2.9-1.1 0-2 .5-2.5 1.4-.4-.9-1.2-1.4-2.3-1.4-1 0-1.8.5-2.2 1.3v-1.1H5.6ZM20 2v1h1v18h-1v1h2V2h-2Z"]),
+    Mattermost: F(["M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2Zm3.4 14.3c-1.9 1.5-4.6 1.4-6.3-.2-1.9-1.8-2-4.8-.3-7l.1 3.2c0 1.4.9 2.6 2.3 2.9 1.8.4 3.4-.8 3.6-2.5l.2-5.9 1.4 1.7c1.5 2.4 1.1 5.9-1 7.8l-.1.2Z"]),
   };
 
   // Brand winged glyph — Hermes. amber wings flanking a caduceus staff.
@@ -985,6 +1004,7 @@ That's a lot of water for a moon smaller than ours.`;
     { id: "interface", label: "Interface", icon: "Sliders" },
     { id: "personalization", label: "Personalization", icon: "Sparkle" },
     { id: "connections", label: "Providers", icon: "Server" },
+    { id: "integrations", label: "Integrations", icon: "Plug" },
     { id: "agent", label: "Agent", icon: "Sparkle" },
     { id: "remote", label: "Remote access", icon: "Share" },
     { id: "data", label: "Data Controls", icon: "Database" },
@@ -1177,6 +1197,133 @@ That's a lot of water for a moon smaller than ours.`;
           ))}
         </div>
         <div className="accent-name">{shown ? shown.name : "Custom"}{hover ? " · preview" : ""}</div>
+      </div>
+    );
+  }
+
+  // ---- Integrations: connect the agent to messaging channels ----
+  function IntegrationsPanel({ onToast }) {
+    const [data, setData] = React.useState(null);
+    const [open, setOpen] = React.useState(null);   // channel id being configured
+    const [draft, setDraft] = React.useState({});    // {env: value}
+    const [busy, setBusy] = React.useState(false);
+    const load = () => fetch("/api/integrations").then((r) => r.json()).then(setData);
+    React.useEffect(() => { load(); }, []);
+    if (!data) return <div><h3>Integrations</h3><p style={{ color: "var(--text-3)" }}>Loading…</p></div>;
+
+    const channels = data.channels || [];
+    const connectedCount = channels.filter((c) => c.connected).length;
+    const cur = channels.find((c) => c.id === open);
+
+    const openCard = (c) => { setOpen(c.id); setDraft({}); };
+    const save = (c) => {
+      setBusy(true);
+      fetch("/api/integrations/save", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel: c.id, values: draft }) })
+        .then((r) => r.json()).then((res) => {
+          setBusy(false);
+          if (res.ok) { onToast && onToast({ type: "success", title: c.label + " connected", desc: res.restarted ? "Restarting the agent gateway…" : "Saved" }); setOpen(null); load(); }
+          else onToast && onToast({ type: "error", title: "Could not connect", desc: res.error || "failed" });
+        }).catch(() => { setBusy(false); onToast && onToast({ type: "error", title: "Network error" }); });
+    };
+    const disconnect = (c) => {
+      setBusy(true);
+      fetch("/api/integrations/disconnect", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel: c.id }) })
+        .then((r) => r.json()).then((res) => {
+          setBusy(false);
+          onToast && onToast({ type: res.ok ? "success" : "error", title: res.ok ? c.label + " disconnected" : (res.error || "failed") });
+          setOpen(null); load();
+        });
+    };
+
+    return (
+      <div>
+        <h3 style={{ marginBottom: 6 }}>Integrations</h3>
+        <p style={{ fontSize: 13, color: "var(--text-3)", marginTop: 0 }}>
+          Reach your agent from the apps you already use. Connecting a channel stores its
+          credentials with your agent (chmod&nbsp;600) and restarts it — every message then runs
+          through the full agent, with tools. {connectedCount > 0 && <b>{connectedCount} connected.</b>}
+        </p>
+        {!data.gateway_ready && (
+          <div style={{ border: "1px solid var(--amber)", background: "color-mix(in srgb, var(--amber) 8%, transparent)", borderRadius: 10, padding: "10px 12px", margin: "10px 0", fontSize: 13 }}>
+            No agent gateway detected yet. Install or select your agent in the <b>Agent</b> tab first — channels deliver messages through it.
+          </div>
+        )}
+
+        {!cur && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))", gap: 12, marginTop: 14 }}>
+            {channels.map((c) => {
+              const Ic = I[c.icon] || I.Plug;
+              return (
+                <button key={c.id} onClick={() => openCard(c)}
+                  style={{ textAlign: "left", border: "1px solid var(--border)", borderRadius: 13, padding: 14, background: "var(--surface)", cursor: "pointer", display: "flex", flexDirection: "column", gap: 8, transition: "border-color .15s, transform .1s", outline: c.connected ? "1.5px solid var(--green)" : "none" }}
+                  onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--accent)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border)"; }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span style={{ display: "inline-flex", width: 38, height: 38, borderRadius: 10, alignItems: "center", justifyContent: "center", background: "color-mix(in srgb, var(--accent) 12%, transparent)", color: "var(--accent-deep)" }}><Ic size={22} /></span>
+                    {c.connected
+                      ? <span style={{ fontSize: 11, fontWeight: 650, color: "var(--green)", display: "inline-flex", alignItems: "center", gap: 4 }}><span style={{ width: 7, height: 7, borderRadius: 9, background: "var(--green)" }} /> Connected</span>
+                      : <span style={{ fontSize: 11, color: "var(--text-3)" }}>Not connected</span>}
+                  </div>
+                  <div style={{ fontWeight: 650, fontSize: 14.5 }}>{c.label}</div>
+                  <div style={{ fontSize: 12.5, color: "var(--text-3)", lineHeight: 1.4 }}>{c.blurb}</div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {cur && (() => {
+          const Ic = I[cur.icon] || I.Plug;
+          const missingReq = cur.fields.some((f) => f.required && !f.is_set && !(draft[f.env] || "").trim());
+          return (
+            <div style={{ marginTop: 6 }}>
+              <button className="btn btn-ghost" style={{ padding: "4px 8px", marginBottom: 10 }} onClick={() => setOpen(null)}><I.ChevronRight size={15} style={{ transform: "rotate(180deg)" }} /> All channels</button>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
+                <span style={{ display: "inline-flex", width: 44, height: 44, borderRadius: 11, alignItems: "center", justifyContent: "center", background: "color-mix(in srgb, var(--accent) 12%, transparent)", color: "var(--accent-deep)" }}><Ic size={26} /></span>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 16 }}>{cur.label}{cur.connected && <span style={{ fontSize: 11, fontWeight: 650, color: "var(--green)", marginLeft: 8 }}>● connected</span>}</div>
+                  <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>{cur.blurb}</div>
+                </div>
+              </div>
+
+              {cur.guide && cur.guide.length > 0 && (
+                <div style={{ border: "1px solid var(--border)", borderRadius: 11, padding: "12px 14px", margin: "12px 0", background: "var(--surface-2, var(--surface))" }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--text-3)", marginBottom: 8 }}>Setup</div>
+                  <ol style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.65 }}>
+                    {cur.guide.map((g, i) => <li key={i}>{g}</li>)}
+                  </ol>
+                  {cur.docs && <a href={cur.docs} target="_blank" rel="noreferrer" style={{ display: "inline-block", marginTop: 8, fontSize: 12.5, color: "var(--accent-deep)" }}>Full docs →</a>}
+                </div>
+              )}
+
+              {cur.kind === "qr" && cur.pair_cmd && (
+                <div style={{ fontSize: 13, margin: "10px 0" }}>
+                  After connecting, run this where the agent runs to scan the QR:
+                  <pre style={{ background: "var(--code-bg, #0b0b0b11)", borderRadius: 8, padding: "8px 10px", marginTop: 6, fontSize: 12.5, overflow: "auto" }}><code>{cur.pair_cmd}</code></pre>
+                </div>
+              )}
+
+              {cur.fields.map((f) => (
+                <div key={f.env} style={{ marginBottom: 12 }}>
+                  <label className="field-label">{f.label}{f.required && <span style={{ color: "var(--red)" }}> *</span>}{f.is_set && <span style={{ fontSize: 11, color: "var(--green)", marginLeft: 6 }}>● saved</span>}</label>
+                  {f.type === "textarea"
+                    ? <textarea className="field" style={{ minHeight: 120, fontFamily: "ui-monospace, monospace", fontSize: 12.5 }} placeholder={f.is_set ? "•••••• saved — paste to replace" : f.placeholder} value={draft[f.env] || ""} onChange={(e) => setDraft((d) => ({ ...d, [f.env]: e.target.value }))} />
+                    : <input className="field" type={f.type === "password" ? "password" : "text"} placeholder={f.is_set && f.type === "password" ? "•••••• saved — paste to replace" : f.placeholder} value={draft[f.env] || ""} onChange={(e) => setDraft((d) => ({ ...d, [f.env]: e.target.value }))} />}
+                  {f.help && <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 4 }}>{f.help}</div>}
+                </div>
+              ))}
+
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 16 }}>
+                <button className="btn btn-primary" disabled={busy || (missingReq && !cur.connected && cur.fields.length > 0)} onClick={() => save(cur)}>
+                  {busy ? "Saving…" : (cur.connected ? "Update" : "Connect")}
+                </button>
+                {cur.connected && <button className="btn btn-danger" disabled={busy} onClick={() => disconnect(cur)}>Disconnect</button>}
+              </div>
+            </div>
+          );
+        })()}
       </div>
     );
   }
@@ -1414,6 +1561,7 @@ That's a lot of water for a moon smaller than ours.`;
             )}
 
             {tab === "connections" && <ProvidersPanel onToast={onToast} />}
+            {tab === "integrations" && <IntegrationsPanel onToast={onToast} />}
             {tab === "agent" && <AgentPanel onToast={onToast} />}
             {tab === "remote" && <RemotePanel onToast={onToast} />}
 

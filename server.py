@@ -492,6 +492,357 @@ def restart_gateway():
         return False
 
 
+# ==================== Messaging integrations (channels) ====================
+# AgentBay can connect the agent gateway to messaging platforms (Telegram,
+# Discord, Slack, WhatsApp, Google Chat, …). Same mechanism the Hermes gateway
+# uses itself: credentials live in the gateway's .env, behaviour knobs in
+# config.yaml, and the gateway connects to any platform whose token is present.
+# We write the .env, then restart the gateway (passwordless sudoers rule).
+#
+# Each integration is data-driven so the UI renders generically:
+#   primary  — env var that decides "connected" (non-empty = on)
+#   fields   — what the UI collects → env vars (secret fields never echoed back)
+#   const    — env vars forced on connect (e.g. WHATSAPP_ENABLED=true)
+#   file     — field env vars whose value is written to a file, env points at it
+INTEGRATIONS = [
+    {
+        "id": "telegram", "label": "Telegram", "icon": "Telegram", "kind": "token",
+        "blurb": "Message your agent from any Telegram chat or group.",
+        "primary": "TELEGRAM_BOT_TOKEN",
+        "docs": "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/telegram",
+        "fields": [
+            {"env": "TELEGRAM_BOT_TOKEN", "label": "Bot token", "type": "password", "required": True,
+             "placeholder": "123456789:ABCdef-ghIJKlmno...",
+             "help": "From @BotFather → /newbot → copy the HTTP API token."},
+            {"env": "TELEGRAM_ALLOWED_USERS", "label": "Allowed user IDs", "type": "text", "required": False,
+             "placeholder": "123456789, 987654321",
+             "help": "Optional. Comma-separated numeric IDs. Leave blank to use DM pairing."},
+        ],
+        "guide": [
+            "In Telegram, open @BotFather and send /newbot.",
+            "Pick a name and a username; BotFather replies with a token.",
+            "Paste the token here and press Connect.",
+            "DM your new bot — the first message triggers a pairing code you approve.",
+        ],
+    },
+    {
+        "id": "discord", "label": "Discord", "icon": "Discord", "kind": "token",
+        "blurb": "Add the agent as a Discord bot in your server or DMs.",
+        "primary": "DISCORD_BOT_TOKEN",
+        "docs": "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/discord",
+        "fields": [
+            {"env": "DISCORD_BOT_TOKEN", "label": "Bot token", "type": "password", "required": True,
+             "placeholder": "MTk4N...", "help": "Discord Developer Portal → your app → Bot → Reset Token."},
+            {"env": "DISCORD_ALLOWED_CHANNELS", "label": "Allowed channel IDs", "type": "text", "required": False,
+             "placeholder": "112233445566", "help": "Optional. Restrict to specific channels."},
+        ],
+        "guide": [
+            "Go to discord.com/developers → New Application.",
+            "Open the Bot tab, Reset Token, copy it.",
+            "Enable the Message Content intent under Privileged Gateway Intents.",
+            "OAuth2 → URL Generator → scopes bot + applications.commands → invite it to your server.",
+            "Paste the token here and Connect.",
+        ],
+    },
+    {
+        "id": "slack", "label": "Slack", "icon": "Slack", "kind": "token",
+        "blurb": "Talk to the agent from Slack channels and DMs (Socket Mode).",
+        "primary": "SLACK_BOT_TOKEN",
+        "docs": "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/slack",
+        "fields": [
+            {"env": "SLACK_BOT_TOKEN", "label": "Bot token (xoxb-…)", "type": "password", "required": True,
+             "placeholder": "xoxb-...", "help": "OAuth & Permissions → Bot User OAuth Token."},
+            {"env": "SLACK_APP_TOKEN", "label": "App token (xapp-…)", "type": "password", "required": True,
+             "placeholder": "xapp-...", "help": "Basic Information → App-Level Tokens (connections:write)."},
+            {"env": "SLACK_SIGNING_SECRET", "label": "Signing secret", "type": "password", "required": False,
+             "placeholder": "optional in Socket Mode", "help": "Basic Information → Signing Secret. Optional for Socket Mode."},
+        ],
+        "guide": [
+            "Create an app at api.slack.com/apps (From scratch).",
+            "Enable Socket Mode; generate an App-Level Token with connections:write (xapp-).",
+            "OAuth & Permissions: add scopes app_mentions:read, chat:write, im:history, channels:history; install to workspace; copy the xoxb- token.",
+            "Paste both tokens here and Connect, then /invite the bot to a channel.",
+        ],
+    },
+    {
+        "id": "whatsapp", "label": "WhatsApp", "icon": "WhatsApp", "kind": "qr",
+        "blurb": "Link a WhatsApp number by scanning a QR code.",
+        "primary": "WHATSAPP_ENABLED",
+        "docs": "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/whatsapp",
+        "const": {"WHATSAPP_ENABLED": "true"},
+        "fields": [],
+        "pair_cmd": "hermes whatsapp",
+        "guide": [
+            "Press Connect — this enables the WhatsApp channel on your gateway.",
+            "On the machine running the agent, run:  hermes whatsapp",
+            "A QR code prints in the terminal — open WhatsApp → Settings → Linked Devices → Link a Device, and scan it.",
+            "Once linked, message that number from another phone to reach the agent.",
+        ],
+    },
+    {
+        "id": "googlechat", "label": "Google Chat", "icon": "GoogleChat", "kind": "webhook",
+        "blurb": "Run the agent as a Google Chat app for your Workspace.",
+        "primary": "GOOGLE_CHAT_PROJECT_ID",
+        "docs": "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/google-chat",
+        "fields": [
+            {"env": "GOOGLE_CHAT_PROJECT_ID", "label": "GCP project ID", "type": "text", "required": True,
+             "placeholder": "my-project-123", "help": "The Google Cloud project that owns the Chat app."},
+            {"env": "GOOGLE_CHAT_SUBSCRIPTION", "label": "Pub/Sub subscription", "type": "text", "required": True,
+             "placeholder": "projects/my-project-123/subscriptions/hermes-chat",
+             "help": "Pull subscription the Chat API publishes events to."},
+            {"env": "GOOGLE_CHAT_SERVICE_ACCOUNT_JSON", "label": "Service account JSON", "type": "textarea", "required": True,
+             "file": "googlechat-service-account.json",
+             "placeholder": '{\n  "type": "service_account", ...\n}',
+             "help": "Paste the downloaded service-account key JSON. Stored as a file on the gateway, chmod 600."},
+        ],
+        "guide": [
+            "In Google Cloud Console enable the Google Chat API and Pub/Sub API.",
+            "Create a service account, add a JSON key, and download it.",
+            "Create a Pub/Sub topic + pull subscription; grant the Chat API service agent Publisher on the topic.",
+            "In Chat API → Configuration: app name, set 'App receives events via Cloud Pub/Sub', point it at your topic.",
+            "Paste the project ID, subscription path, and the JSON key here, then Connect.",
+        ],
+    },
+    {
+        "id": "signal", "label": "Signal", "icon": "Signal", "kind": "token",
+        "blurb": "Bridge Signal via a signal-cli REST endpoint.",
+        "primary": "SIGNAL_HTTP_URL",
+        "docs": "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/signal",
+        "fields": [
+            {"env": "SIGNAL_HTTP_URL", "label": "signal-cli REST URL", "type": "text", "required": True,
+             "placeholder": "http://localhost:8080", "help": "URL of a running signal-cli-rest-api instance."},
+            {"env": "SIGNAL_ACCOUNT", "label": "Signal number", "type": "text", "required": True,
+             "placeholder": "+15551234567", "help": "The registered phone number, E.164 format."},
+        ],
+        "guide": [
+            "Run signal-cli-rest-api (Docker: bbernhard/signal-cli-rest-api).",
+            "Register/link your number with it.",
+            "Enter the REST URL and your number here, then Connect.",
+        ],
+    },
+    {
+        "id": "matrix", "label": "Matrix", "icon": "Matrix", "kind": "login",
+        "blurb": "Connect to any Matrix homeserver (Element, etc.).",
+        "primary": "MATRIX_HOMESERVER",
+        "docs": "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/matrix",
+        "fields": [
+            {"env": "MATRIX_HOMESERVER", "label": "Homeserver URL", "type": "text", "required": True,
+             "placeholder": "https://matrix.org", "help": "Your Matrix homeserver base URL."},
+            {"env": "MATRIX_USER", "label": "User ID", "type": "text", "required": True,
+             "placeholder": "@bot:matrix.org", "help": "The bot account's full Matrix ID."},
+            {"env": "MATRIX_PASSWORD", "label": "Password", "type": "password", "required": False,
+             "placeholder": "account password", "help": "Use this OR an access token below."},
+            {"env": "MATRIX_ACCESS_TOKEN", "label": "Access token", "type": "password", "required": False,
+             "placeholder": "syt_...", "help": "Alternative to password — a long-lived access token."},
+        ],
+        "guide": [
+            "Create a Matrix account for the bot on your homeserver.",
+            "Enter the homeserver URL, the bot's user ID, and a password (or access token).",
+            "Connect, then invite the bot to a room.",
+        ],
+    },
+    {
+        "id": "mattermost", "label": "Mattermost", "icon": "Mattermost", "kind": "token",
+        "blurb": "Add the agent as a Mattermost bot account.",
+        "primary": "MATTERMOST_URL",
+        "docs": "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/mattermost",
+        "fields": [
+            {"env": "MATTERMOST_URL", "label": "Server URL", "type": "text", "required": True,
+             "placeholder": "https://chat.example.com", "help": "Your Mattermost base URL."},
+            {"env": "MATTERMOST_TOKEN", "label": "Bot token", "type": "password", "required": True,
+             "placeholder": "token", "help": "System Console → Integrations → Bot Accounts → create → copy token."},
+        ],
+        "guide": [
+            "In the System Console enable Bot Accounts.",
+            "Integrations → Bot Accounts → Add → copy the access token.",
+            "Enter the server URL and token here, then Connect.",
+        ],
+    },
+    {
+        "id": "email", "label": "Email", "icon": "Mail", "kind": "login",
+        "blurb": "Let the agent read and reply over an IMAP/SMTP mailbox.",
+        "primary": "EMAIL_ADDRESS",
+        "docs": "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/email",
+        "fields": [
+            {"env": "EMAIL_ADDRESS", "label": "Email address", "type": "text", "required": True,
+             "placeholder": "agent@example.com"},
+            {"env": "EMAIL_PASSWORD", "label": "Password / app password", "type": "password", "required": True,
+             "placeholder": "app password", "help": "For Gmail/Outlook use an app password, not your login password."},
+            {"env": "EMAIL_IMAP_HOST", "label": "IMAP host", "type": "text", "required": True,
+             "placeholder": "imap.gmail.com"},
+            {"env": "EMAIL_SMTP_HOST", "label": "SMTP host", "type": "text", "required": True,
+             "placeholder": "smtp.gmail.com"},
+            {"env": "EMAIL_ALLOWED_USERS", "label": "Allowed senders", "type": "text", "required": False,
+             "placeholder": "you@example.com", "help": "Optional. Only these addresses are answered."},
+        ],
+        "guide": [
+            "Create or pick a mailbox for the agent.",
+            "Generate an app password if your provider requires one (Gmail, Outlook).",
+            "Fill in the address, password and IMAP/SMTP hosts, then Connect.",
+        ],
+    },
+]
+_INTEGRATIONS_BY_ID = {c["id"]: c for c in INTEGRATIONS}
+
+
+def _gateway_env_path():
+    """The agent gateway's .env file (where channel credentials live)."""
+    he = os.environ.get("HERMES_HOME")
+    if he:
+        return Path(he) / ".env"
+    cf = _gateway_config_path()
+    if cf:
+        return cf.parent / ".env"
+    return Path.home() / ".hermes" / ".env"
+
+
+def _parse_env(text):
+    """Parse a .env into an ordered list of (kind, key, value/raw) entries so we
+    can rewrite it preserving comments and order."""
+    out = []
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#") or "=" not in s:
+            out.append(("raw", None, line))
+            continue
+        k, v = line.split("=", 1)
+        out.append(("kv", k.strip(), v))
+    return out
+
+
+def read_gateway_env():
+    p = _gateway_env_path()
+    if not p.is_file():
+        return {}
+    env = {}
+    try:
+        for kind, k, v in _parse_env(p.read_text()):
+            if kind == "kv":
+                env[k] = v.strip().strip('"').strip("'")
+    except Exception:
+        return {}
+    return env
+
+
+def write_gateway_env(updates):
+    """Merge {KEY: value} into the gateway .env, preserving order/comments.
+    A value of "" / None removes that key. Returns True on write."""
+    p = _gateway_env_path()
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        existing = _parse_env(p.read_text()) if p.is_file() else []
+    except Exception:
+        return False
+    remove = {k for k, v in updates.items() if v in ("", None)}
+    setk = {k: v for k, v in updates.items() if v not in ("", None)}
+    seen, lines = set(), []
+    for kind, k, raw in existing:
+        if kind == "kv" and k in setk:
+            lines.append(f"{k}={setk[k]}"); seen.add(k)
+        elif kind == "kv" and k in remove:
+            seen.add(k)                       # drop the line
+        elif kind == "kv":
+            lines.append(f"{k}={raw.strip()}")   # untouched key — keep its KEY= prefix
+        else:
+            lines.append(raw)                    # comment / blank line, verbatim
+    for k, v in setk.items():
+        if k not in seen:
+            lines.append(f"{k}={v}")
+    try:
+        p.write_text("\n".join(lines).rstrip("\n") + "\n")
+        try:
+            os.chmod(p, 0o600)
+        except Exception:
+            pass
+        return True
+    except Exception:
+        return False
+
+
+def _integration_public(c, env):
+    """One channel's spec + connection status for the UI. Never echoes secrets."""
+    set_fields = []
+    for f in c["fields"]:
+        val = env.get(f["env"], "")
+        set_fields.append({
+            "env": f["env"], "label": f["label"], "type": f.get("type", "text"),
+            "required": bool(f.get("required")), "placeholder": f.get("placeholder", ""),
+            "help": f.get("help", ""), "file": bool(f.get("file")),
+            "is_set": bool(val),
+        })
+    return {
+        "id": c["id"], "label": c["label"], "icon": c["icon"], "kind": c["kind"],
+        "blurb": c["blurb"], "docs": c.get("docs", ""), "guide": c.get("guide", []),
+        "pair_cmd": c.get("pair_cmd", ""), "fields": set_fields,
+        "connected": bool(env.get(c["primary"], "")),
+    }
+
+
+def integrations_status(cfg):
+    env = read_gateway_env()
+    gw = bool(_agent_gateway(cfg) or _gateway_config_path())
+    prof = _gateway_profile()
+    return {
+        "gateway_ready": gw,
+        "gateway_profile": prof,
+        "channels": [_integration_public(c, env) for c in INTEGRATIONS],
+    }
+
+
+def _channel_file_dir():
+    p = _gateway_env_path().parent
+    return p
+
+
+def save_integration(cid, values):
+    """Write a channel's credentials into the gateway .env (file-type fields go to
+    a chmod-600 file), apply forced consts, and restart the gateway. Returns dict."""
+    c = _INTEGRATIONS_BY_ID.get(cid)
+    if not c:
+        return {"ok": False, "error": "unknown channel"}
+    if not isinstance(values, dict):
+        values = {}
+    updates = dict(c.get("const", {}))
+    for f in c["fields"]:
+        if f["env"] not in values:
+            continue
+        v = values[f["env"]]
+        if v is None:
+            continue
+        v = str(v)
+        if not v.strip():
+            continue                          # blank → leave existing untouched
+        if f.get("file"):
+            fp = _channel_file_dir() / f["file"]
+            try:
+                fp.write_text(v)
+                os.chmod(fp, 0o600)
+            except Exception as e:
+                return {"ok": False, "error": f"could not write key file: {e}"}
+            updates[f["env"]] = str(fp)
+        else:
+            updates[f["env"]] = v.replace("\n", " ").strip()
+    if not write_gateway_env(updates):
+        return {"ok": False, "error": "could not write gateway .env"}
+    restarted = restart_gateway()
+    return {"ok": True, "restarted": restarted, "channel": cid}
+
+
+def disconnect_integration(cid):
+    c = _INTEGRATIONS_BY_ID.get(cid)
+    if not c:
+        return {"ok": False, "error": "unknown channel"}
+    rm = {c["primary"]: ""}
+    for f in c["fields"]:
+        rm[f["env"]] = ""
+    for k in c.get("const", {}):
+        rm[k] = ""
+    if not write_gateway_env(rm):
+        return {"ok": False, "error": "could not write gateway .env"}
+    restarted = restart_gateway()
+    return {"ok": True, "restarted": restarted, "channel": cid}
+
+
 # map a co-located agent's provider names → AgentBay provider ids
 _AGENT_PROV_MAP = {"deepseek": "deepseek", "openai": "openai", "anthropic": "anthropic",
                    "claude": "anthropic", "gemini": "gemini", "google": "gemini",
@@ -1374,6 +1725,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, {"error": "unknown agent"})
         if path == "/api/enabled-models":
             return self._send(200, {"models": enabled_models(load_config())})
+        if path == "/api/integrations":
+            return self._send(200, integrations_status(load_config()))
         if path == "/api/import/sessions":
             try:
                 return self._send(200, {"sessions": read_agent_sessions()})
@@ -1482,6 +1835,12 @@ class Handler(BaseHTTPRequestHandler):
                                 key_override=data.get("key") or data.get("deepseek_key"),
                                 base_override=data.get("base_url"))
             return self._send(200, res)
+        if path == "/api/integrations/save":
+            cid = data.get("channel") or data.get("id")
+            return self._send(200, save_integration(cid, data.get("values") or {}))
+        if path == "/api/integrations/disconnect":
+            cid = data.get("channel") or data.get("id")
+            return self._send(200, disconnect_integration(cid))
         if path == "/api/import/providers":
             found = read_agent_providers()
             cfg = load_config()
