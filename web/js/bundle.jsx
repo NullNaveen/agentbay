@@ -1135,6 +1135,52 @@ That's a lot of water for a moon smaller than ours.`;
   }
 
   // ---- Agent panel (install / detect / update Hermes & OpenClaw) ----
+  // ---- Browser control (browser-use): let the agent drive a real browser ----
+  function BrowserUseCard({ onToast }) {
+    const [st, setSt] = React.useState(null);
+    const [log, setLog] = React.useState("");
+    const [busy, setBusy] = React.useState(false);
+    const load = () => fetch("/api/skill/browser-use").then((r) => r.json()).then(setSt).catch(() => {});
+    React.useEffect(() => { load(); }, []);
+    const run = (kind) => {
+      setBusy(true); setLog("Starting…");
+      fetch("/api/skill/browser-use/" + kind, { method: "POST" }).then((r) => r.json()).then(({ job }) => {
+        const poll = setInterval(() => fetch("/api/install/status/" + job).then((r) => r.json()).then((j) => {
+          setLog((j.log || []).join("\n"));
+          if (j.status === "done" || j.status === "error") {
+            clearInterval(poll); setBusy(false); load();
+            onToast && onToast({ type: j.status === "done" ? "success" : "error", title: "Browser control " + (j.status === "done" ? "ready" : "failed") });
+          }
+        }), 1500);
+      }).catch(() => { setBusy(false); onToast && onToast({ type: "error", title: "Failed to start" }); });
+    };
+    return (
+      <div className="set-section" style={{ marginTop: 26 }}>
+        <div className="sec-title">Browser control</div>
+        <p style={{ fontSize: 13, color: "var(--text-3)", marginTop: 2 }}>
+          Lets the agent drive a real web browser — open pages, click, fill forms, read
+          JavaScript-heavy or logged-in sites, take screenshots. Use it for tasks that need a
+          live page, not just a search. Installs the <b>browser-use</b> skill for your agent.
+        </p>
+        <div style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 14, marginTop: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 650 }}>browser-use</div>
+              <div style={{ fontSize: 12.5, color: st && st.installed ? "var(--green)" : "var(--text-3)" }}>
+                {!st ? "checking…" : st.installed ? "✓ installed" + (st.current ? " · " + st.current : "") : "not installed"}
+              </div>
+              {st && st.update_available && <div style={{ fontSize: 12, color: "var(--accent-deep)", marginTop: 3 }}>↑ update available: {st.latest}</div>}
+            </div>
+            {st && !st.installed && <button className="btn btn-primary" disabled={busy} onClick={() => run("install")}>{busy ? "Installing…" : "Install"}</button>}
+            {st && st.installed && st.update_available && <button className="btn btn-primary" disabled={busy} onClick={() => run("update")}>{busy ? "Updating…" : "Update"}</button>}
+            {st && st.installed && !st.update_available && <span style={{ fontSize: 12, color: "var(--green)" }}>up to date</span>}
+          </div>
+        </div>
+        {log && <pre style={{ marginTop: 12, maxHeight: 180, overflow: "auto", background: "#0c0c10", color: "#cfe", padding: 12, borderRadius: 10, fontSize: 12, whiteSpace: "pre-wrap" }}>{log}</pre>}
+      </div>
+    );
+  }
+
   function AgentPanel({ onToast }) {
     const [agents, setAgents] = React.useState(null);
     const [upd, setUpd] = React.useState({});   // {agent:{update_available,current,latest}}
@@ -1178,6 +1224,7 @@ That's a lot of water for a moon smaller than ours.`;
           );
         })}
         {log && <pre style={{ marginTop: 12, maxHeight: 200, overflow: "auto", background: "#0c0c10", color: "#cfe", padding: 12, borderRadius: 10, fontSize: 12, whiteSpace: "pre-wrap" }}>{log}</pre>}
+        <BrowserUseCard onToast={onToast} />
       </div>
     );
   }

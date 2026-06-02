@@ -2362,6 +2362,117 @@ That's a lot of water for a moon smaller than ours.`;
   }
 
   // ---- Agent panel (install / detect / update Hermes & OpenClaw) ----
+  // ---- Browser control (browser-use): let the agent drive a real browser ----
+  function BrowserUseCard({
+    onToast
+  }) {
+    const [st, setSt] = React.useState(null);
+    const [log, setLog] = React.useState("");
+    const [busy, setBusy] = React.useState(false);
+    const load = () => fetch("/api/skill/browser-use").then(r => r.json()).then(setSt).catch(() => {});
+    React.useEffect(() => {
+      load();
+    }, []);
+    const run = kind => {
+      setBusy(true);
+      setLog("Starting…");
+      fetch("/api/skill/browser-use/" + kind, {
+        method: "POST"
+      }).then(r => r.json()).then(({
+        job
+      }) => {
+        const poll = setInterval(() => fetch("/api/install/status/" + job).then(r => r.json()).then(j => {
+          setLog((j.log || []).join("\n"));
+          if (j.status === "done" || j.status === "error") {
+            clearInterval(poll);
+            setBusy(false);
+            load();
+            onToast && onToast({
+              type: j.status === "done" ? "success" : "error",
+              title: "Browser control " + (j.status === "done" ? "ready" : "failed")
+            });
+          }
+        }), 1500);
+      }).catch(() => {
+        setBusy(false);
+        onToast && onToast({
+          type: "error",
+          title: "Failed to start"
+        });
+      });
+    };
+    return /*#__PURE__*/React.createElement("div", {
+      className: "set-section",
+      style: {
+        marginTop: 26
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "sec-title"
+    }, "Browser control"), /*#__PURE__*/React.createElement("p", {
+      style: {
+        fontSize: 13,
+        color: "var(--text-3)",
+        marginTop: 2
+      }
+    }, "Lets the agent drive a real web browser \u2014 open pages, click, fill forms, read JavaScript-heavy or logged-in sites, take screenshots. Use it for tasks that need a live page, not just a search. Installs the ", /*#__PURE__*/React.createElement("b", null, "browser-use"), " skill for your agent."), /*#__PURE__*/React.createElement("div", {
+      style: {
+        border: "1px solid var(--border)",
+        borderRadius: 12,
+        padding: 14,
+        marginTop: 8
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 10
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontWeight: 650
+      }
+    }, "browser-use"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12.5,
+        color: st && st.installed ? "var(--green)" : "var(--text-3)"
+      }
+    }, !st ? "checking…" : st.installed ? "✓ installed" + (st.current ? " · " + st.current : "") : "not installed"), st && st.update_available && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        color: "var(--accent-deep)",
+        marginTop: 3
+      }
+    }, "\u2191 update available: ", st.latest)), st && !st.installed && /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-primary",
+      disabled: busy,
+      onClick: () => run("install")
+    }, busy ? "Installing…" : "Install"), st && st.installed && st.update_available && /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-primary",
+      disabled: busy,
+      onClick: () => run("update")
+    }, busy ? "Updating…" : "Update"), st && st.installed && !st.update_available && /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 12,
+        color: "var(--green)"
+      }
+    }, "up to date"))), log && /*#__PURE__*/React.createElement("pre", {
+      style: {
+        marginTop: 12,
+        maxHeight: 180,
+        overflow: "auto",
+        background: "#0c0c10",
+        color: "#cfe",
+        padding: 12,
+        borderRadius: 10,
+        fontSize: 12,
+        whiteSpace: "pre-wrap"
+      }
+    }, log));
+  }
   function AgentPanel({
     onToast
   }) {
@@ -2480,7 +2591,9 @@ That's a lot of water for a moon smaller than ours.`;
         fontSize: 12,
         whiteSpace: "pre-wrap"
       }
-    }, log));
+    }, log), /*#__PURE__*/React.createElement(BrowserUseCard, {
+      onToast: onToast
+    }));
   }
 
   // ---- Accent color: curated "stones" that live-preview the whole app on hover ----

@@ -1237,6 +1237,214 @@ _share_lock = threading.RLock()
 
 BIN_DIR = CONFIG_DIR / "bin"   # AgentBay's own tool dir — self-contained, no brew/winget needed
 
+# ---- browser-use skill: let the agent drive a real browser, on any OS --------
+_BU_VENV = CONFIG_DIR / "browser-use-venv"
+
+
+def _bu_paths():
+    win = (os.name == "nt")
+    bindir = _BU_VENV / ("Scripts" if win else "bin")
+    return {
+        "venv": _BU_VENV,
+        "python": bindir / ("python.exe" if win else "python"),
+        "pip": bindir / ("pip.exe" if win else "pip"),
+        "cli": bindir / ("browser-use.exe" if win else "browser-use"),
+        "playwright": bindir / ("playwright.exe" if win else "playwright"),
+        "wrapper": (BIN_DIR / ("browser-use.cmd" if win else "browser-use")),
+    }
+
+
+def _agent_skills_dirs():
+    """Where to drop the skill so a co-located agent picks it up. Hermes reads
+    HERMES_HOME/skills (per-user) and ~/.hermes/skills (standalone)."""
+    out, seen = [], set()
+    cands = []
+    he = os.environ.get("HERMES_HOME")
+    if he:
+        cands.append(Path(he) / "skills")
+    cands += [Path.home() / ".hermes" / "skills"]
+    if os.name == "nt":
+        la = os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))
+        cands.append(Path(la) / "hermes" / "skills")
+    for c in cands:
+        if str(c) not in seen:
+            seen.add(str(c)); out.append(c)
+    return out
+
+
+def _bu_skill_md(cli_cmd):
+    return """---
+name: browser-use
+description: Drive a real web browser — open pages, click, type, read, fill forms, screenshot, extract data from JavaScript-heavy or logged-in sites. Use when a task needs interacting with a live page, not just a web search.
+allowed-tools: Bash(browser-use:*)
+---
+
+# browser-use — control a real browser
+
+Use this when the task needs a **live, rendered web page** (logged-in dashboards,
+multi-step forms, JS-heavy sites, "show me this page"), not a plain search.
+For simple lookups use `web_search` instead — it's faster.
+
+The `browser-use` CLI keeps one browser open across calls via a background daemon.
+
+```
+browser-use open <url>       # launch + navigate
+browser-use state            # list clickable elements (with indices) + page text
+browser-use click <index>    # click an element by its index
+browser-use input <i> "txt"  # type into field <i>
+browser-use scroll <down|up>
+browser-use screenshot       # capture the page (returns an image path)
+browser-use close            # end the session
+```
+
+Connect to the user's own Chrome (keeps their logins/cookies) when a task is
+behind a login: `browser-use connect` (needs Chrome started with
+`--remote-debugging-port=9222`). Otherwise it uses a managed headless browser.
+""".replace("browser-use ", cli_cmd + " ") if cli_cmd and cli_cmd != "browser-use" else """---
+name: browser-use
+description: Drive a real web browser — open pages, click, type, read, fill forms, screenshot, extract data from JavaScript-heavy or logged-in sites. Use when a task needs interacting with a live page, not just a web search.
+allowed-tools: Bash(browser-use:*)
+---
+
+# browser-use — control a real browser
+
+Use this when the task needs a **live, rendered web page** (logged-in dashboards,
+multi-step forms, JS-heavy sites, "show me this page"), not a plain search.
+For simple lookups use `web_search` instead — it's faster.
+
+```
+browser-use open <url>       # launch + navigate
+browser-use state            # list clickable elements (indices) + page text
+browser-use click <index>    # click an element by index
+browser-use input <i> "txt"  # type into field <i>
+browser-use screenshot       # capture the page
+browser-use close            # end the session
+```
+
+`browser-use connect` attaches to the user's own Chrome (keeps logins) when
+started with `--remote-debugging-port=9222`; otherwise a managed browser is used.
+"""
+
+
+def _pypi_latest(pkg):
+    try:
+        d = json.loads(_urlopen(urllib.request.Request(
+            "https://pypi.org/pypi/%s/json" % pkg,
+            headers={"User-Agent": "AgentBay"}), 12).read())
+        return d.get("info", {}).get("version", "")
+    except Exception:
+        return ""
+
+
+def browser_use_status():
+    p = _bu_paths()
+    installed = p["cli"].exists()
+    cur = ""
+    if installed:
+        try:
+            r = subprocess.run([str(p["python"]), "-c",
+                                "import importlib.metadata as m; print(m.version('browser-use'))"],
+                               capture_output=True, text=True, timeout=15)
+            cur = (r.stdout or "").strip()
+        except Exception:
+            cur = ""
+    latest = _pypi_latest("browser-use")
+    return {"installed": installed, "current": cur, "latest": latest,
+            "update_available": bool(installed and latest and cur and cur != latest),
+            "skill_dirs": [str(d) for d in _agent_skills_dirs()]}
+
+
+def install_browser_use(job_id, update=False):
+    """Set up (or update) browser-use in an isolated venv, install its browser,
+    write its config, and drop the skill into the agent's skills dir. Cross-OS.
+    The Windows Playwright download is run with PYTHONUTF8 to avoid the cp1252
+    'charmap' crash."""
+    def log(line):
+        with _job_lock:
+            _install_jobs[job_id]["log"].append(line)
+
+    def done(ok):
+        with _job_lock:
+            _install_jobs[job_id]["status"] = "done" if ok else "error"
+
+    env = dict(os.environ)
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    p = _bu_paths()
+    try:
+        if not p["python"].exists():
+            log("Creating isolated environment…")
+            r = subprocess.run([sys.executable, "-m", "venv", str(_BU_VENV)],
+                               capture_output=True, text=True, timeout=180, env=env)
+            if r.returncode != 0:
+                log((r.stderr or "venv failed")[:600]); return done(False)
+        log(("Updating" if update else "Installing") + " browser-use…")
+        r = subprocess.run([str(p["pip"]), "install", "-U", "browser-use"],
+                           capture_output=True, text=True, timeout=900, env=env,
+                           errors="replace")
+        log(((r.stdout or "") + (r.stderr or "")).strip()[-1200:])
+        if r.returncode != 0:
+            return done(False)
+        # Install the Chromium engine via browser-use's own installer (UTF-8 forced
+        # → no Windows cp1252 'charmap' crash). Don't hard-fail: connect-to-own-Chrome
+        # still works even if the managed browser download has trouble.
+        log("Installing the browser engine (Chromium) — this can take a few minutes…")
+        try:
+            r = subprocess.run([str(p["cli"]), "install"],
+                               capture_output=True, text=True, timeout=1800, env=env,
+                               errors="replace")
+            log(((r.stdout or "") + (r.stderr or "")).strip()[-800:])
+        except Exception as e:
+            log("browser engine note: " + str(e))
+        # browser-use config
+        try:
+            cfgdir = Path.home() / ".browser-use"
+            cfgdir.mkdir(parents=True, exist_ok=True)
+            conf = {"browser": {"headless": True, "chromium_sandbox": False}}
+            (cfgdir / "config.json").write_text(json.dumps(conf, indent=2))
+        except Exception as e:
+            log("config note: " + str(e))
+        # a `browser-use` wrapper on PATH so the skill's allowed-tools match
+        try:
+            BIN_DIR.mkdir(parents=True, exist_ok=True)
+            if os.name == "nt":
+                p["wrapper"].write_text('@echo off\r\n"%s" %%*\r\n' % str(p["cli"]))
+            else:
+                p["wrapper"].write_text('#!/bin/sh\nexec "%s" "$@"\n' % str(p["cli"]))
+                os.chmod(p["wrapper"], 0o755)
+                # also link into ~/.local/bin (usually on PATH)
+                lb = Path.home() / ".local" / "bin"
+                lb.mkdir(parents=True, exist_ok=True)
+                wl = lb / "browser-use"
+                try:
+                    if wl.exists() or wl.is_symlink():
+                        wl.unlink()
+                    wl.symlink_to(p["wrapper"])
+                except Exception:
+                    shutil.copy2(p["wrapper"], wl); os.chmod(wl, 0o755)
+        except Exception as e:
+            log("wrapper note: " + str(e))
+        # install the skill into the agent's skills dir(s)
+        skill_cmd = "browser-use"
+        wrote = []
+        for sd in _agent_skills_dirs():
+            try:
+                tgt = sd / "automation" / "browser-use"
+                tgt.mkdir(parents=True, exist_ok=True)
+                (tgt / "SKILL.md").write_text(_bu_skill_md(skill_cmd))
+                wrote.append(str(tgt))
+            except Exception:
+                pass
+        if wrote:
+            log("Skill installed for the agent: " + ", ".join(wrote))
+        else:
+            log("Note: no agent skills dir found yet — install Hermes, then re-run.")
+        log("Done. The agent can now browse the web with browser-use.")
+        return done(True)
+    except Exception as e:
+        log("ERROR: " + str(e))
+        return done(False)
+
 
 def _cloudflared_target():
     return str(BIN_DIR / ("cloudflared.exe" if platform.system() == "Windows" else "cloudflared"))
@@ -2048,6 +2256,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, whatsapp_qr_status())
         if path == "/api/sessions":
             return self._send(200, list_sessions())
+        if path == "/api/skill/browser-use":
+            return self._send(200, browser_use_status())
         if path == "/api/import/sessions":
             try:
                 return self._send(200, {"sessions": read_agent_sessions()})
@@ -2158,6 +2368,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, res)
         if path == "/api/shortcut":
             return self._send(200, create_desktop_launcher(force=True))
+        if path in ("/api/skill/browser-use/install", "/api/skill/browser-use/update"):
+            upd = path.endswith("/update")
+            job = f"browser-use-{'update' if upd else 'install'}-{int(time.time())}"
+            with _job_lock:
+                _install_jobs[job] = {"status": "running", "log": [], "agent": "browser-use"}
+            threading.Thread(target=install_browser_use, args=(job,), kwargs={"update": upd}, daemon=True).start()
+            return self._send(200, {"job": job})
         if path == "/api/sessions":
             return self._send(200, merge_sessions(data.get("sessions") or []))
         if path == "/api/sessions/delete":
