@@ -6656,6 +6656,117 @@ Object.assign(window, {
     const [settings, setSettings] = useLocal("hermes_settings", DEFAULT_SETTINGS);
     const [sessions, setSessions] = useLocal("ab_sessions", []);
     const [activeId, setActiveId] = useState(null);
+
+    // ---- server-side chat sync: every browser/device on this account shares chats.
+    // The store lives with the AgentBay instance; we merge by id (newest `updated`
+    // wins) and honour tombstones, so a teammate's chats show up and deletes stick.
+    const syncSnap = useRef(new Map()); // id -> JSON(content w/o `updated`) at last sync
+    const syncReady = useRef(false);
+    const sessionsLive = useRef(sessions);
+    useEffect(() => {
+      sessionsLive.current = sessions;
+    }, [sessions]);
+    const _sansUpd = s => {
+      const c = Object.assign({}, s);
+      delete c.updated;
+      return JSON.stringify(c);
+    };
+    const _grpFor = ts => {
+      const day = 864e5,
+        d = Date.now() - (ts || Date.now());
+      return d < day ? "Today" : d < 2 * day ? "Yesterday" : d < 7 * day ? "Previous 7 Days" : d < 30 * day ? "Previous 30 Days" : "Older";
+    };
+    const _normSession = s => {
+      // ensure synced chats have what the sidebar needs to render
+      const out = Object.assign({
+        tags: [],
+        pinned: false,
+        messages: []
+      }, s);
+      if (!out.group || D.GROUP_ORDER.indexOf(out.group) === -1) out.group = _grpFor(out.updated);
+      return out;
+    };
+    const reconcileServer = useCallback((srv, del) => {
+      const delSet = new Set(del || []);
+      setSessions(local => {
+        const byId = new Map(local.map(s => [s.id, s]));
+        (srv || []).forEach(raw => {
+          const s = _normSession(raw);
+          if (!s || !s.id || delSet.has(s.id)) return;
+          const loc = byId.get(s.id);
+          if (!loc || (s.updated || 0) > (loc.updated || 0)) {
+            byId.set(s.id, s);
+            syncSnap.current.set(s.id, _sansUpd(s));
+          }
+        });
+        delSet.forEach(id => {
+          byId.delete(id);
+          syncSnap.current.delete(id);
+        });
+        return Array.from(byId.values()).map(_normSession).sort((a, b) => (b.updated || 0) - (a.updated || 0));
+      });
+    }, []);
+    // initial pull: merge the server's chats into whatever is cached locally
+    useEffect(() => {
+      fetch("/api/sessions").then(r => r.json()).then(d => reconcileServer(d.sessions, d.deleted)).catch(() => {}).finally(() => {
+        syncReady.current = true;
+      });
+    }, []);
+    // push local changes up (debounced); stamp `updated` on whatever changed
+    useEffect(() => {
+      if (!syncReady.current) return;
+      const t = setTimeout(() => {
+        const now = Date.now();
+        let bumped = false;
+        const payload = sessionsLive.current.map(s => {
+          if (syncSnap.current.get(s.id) !== _sansUpd(s)) {
+            bumped = true;
+            return Object.assign({}, s, {
+              updated: now
+            });
+          }
+          return s;
+        });
+        if (!bumped && syncSnap.current.size) return;
+        payload.forEach(s => syncSnap.current.set(s.id, _sansUpd(s)));
+        fetch("/api/sessions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            sessions: payload
+          })
+        }).then(r => r.json()).then(d => reconcileServer(d.sessions, d.deleted)).catch(() => {});
+      }, 700);
+      return () => clearTimeout(t);
+    }, [sessions]);
+    // pull other browsers' changes periodically + when the tab regains focus
+    useEffect(() => {
+      const pull = () => {
+        if (syncReady.current) fetch("/api/sessions").then(r => r.json()).then(d => reconcileServer(d.sessions, d.deleted)).catch(() => {});
+      };
+      const id = setInterval(pull, 8000);
+      window.addEventListener("focus", pull);
+      return () => {
+        clearInterval(id);
+        window.removeEventListener("focus", pull);
+      };
+    }, []);
+    const removeSessionRemote = id => {
+      try {
+        fetch("/api/sessions/delete", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            id,
+            ts: Date.now()
+          })
+        });
+      } catch (e) {}
+    };
     const [sidebarW, setSidebarW] = useLocal("hermes_sbw", 260);
     const [collapsed, setCollapsed] = useState(settings.collapseDefault);
     const [mobileOpen, setMobileOpen] = useState(false);
@@ -7245,6 +7356,7 @@ Object.assign(window, {
       });
     };
     const archiveSession = s => {
+      removeSessionRemote(s.id);
       setSessions(ss => ss.filter(x => x.id !== s.id));
       if (activeId === s.id) setActiveId(null);
       toast({
@@ -7253,6 +7365,7 @@ Object.assign(window, {
       });
     };
     const deleteSession = s => {
+      removeSessionRemote(s.id);
       setSessions(ss => ss.filter(x => x.id !== s.id));
       if (activeId === s.id) setActiveId(null);
       setModal(null);
@@ -7786,6 +7899,7 @@ Object.assign(window, {
       body: "This permanently removes all " + sessions.length + " conversations.",
       onClose: () => setModal(null),
       onConfirm: () => {
+        sessionsLive.current.forEach(s => removeSessionRemote(s.id));
         setSessions([]);
         setActiveId(null);
         setModal(null);

@@ -207,6 +207,88 @@ def save_config(updates):
     return cfg
 
 
+# ---- server-side chat store (so all browsers of one account share chats) ----
+# One store per AgentBay instance (CONFIG_DIR). On EC2 each user is a separate
+# instance, so their browsers/devices/teammates see the same conversations.
+SESSIONS_FILE = CONFIG_DIR / "sessions.json"
+_sessions_lock = threading.Lock()
+
+
+def _read_sessions_store():
+    try:
+        d = json.loads(SESSIONS_FILE.read_text())
+        if isinstance(d, list):                       # legacy: bare list
+            d = {"sessions": d, "deleted": {}}
+        d.setdefault("sessions", [])
+        d.setdefault("deleted", {})
+        return d
+    except Exception:
+        return {"sessions": [], "deleted": {}}
+
+
+def _write_sessions_store(store):
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        SESSIONS_FILE.write_text(json.dumps(store))
+        try:
+            os.chmod(SESSIONS_FILE, 0o600)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def _sess_updated(s):
+    try:
+        return int(s.get("updated") or s.get("ts_ms") or 0)
+    except Exception:
+        return 0
+
+
+def list_sessions():
+    st = _read_sessions_store()
+    return {"sessions": st["sessions"], "deleted": list(st["deleted"].keys())}
+
+
+def merge_sessions(incoming):
+    """Merge incoming sessions into the store: per id, the newest `updated` wins;
+    ids tombstoned by a >= delete are not resurrected. Returns the merged view."""
+    if not isinstance(incoming, list):
+        incoming = []
+    with _sessions_lock:
+        st = _read_sessions_store()
+        by_id = {s["id"]: s for s in st["sessions"] if isinstance(s, dict) and s.get("id")}
+        deleted = st["deleted"]
+        for s in incoming:
+            if not isinstance(s, dict) or not s.get("id"):
+                continue
+            sid, up = s["id"], _sess_updated(s)
+            if sid in deleted and deleted[sid] >= up:
+                continue                              # don't resurrect a newer delete
+            old = by_id.get(sid)
+            if not old or up >= _sess_updated(old):
+                by_id[sid] = s
+        merged = sorted(by_id.values(), key=_sess_updated, reverse=True)
+        st["sessions"] = merged
+        _write_sessions_store(st)
+        return {"sessions": merged, "deleted": list(deleted.keys())}
+
+
+def delete_session(sid, ts=0):
+    if not sid:
+        return list_sessions()
+    with _sessions_lock:
+        st = _read_sessions_store()
+        st["sessions"] = [s for s in st["sessions"] if s.get("id") != sid]
+        st["deleted"][sid] = max(int(ts or 0), st["deleted"].get(sid, 0)) or int(time.time() * 1000)
+        # keep the tombstone list from growing forever
+        if len(st["deleted"]) > 2000:
+            for k in sorted(st["deleted"], key=lambda k: st["deleted"][k])[:500]:
+                st["deleted"].pop(k, None)
+        _write_sessions_store(st)
+        return {"sessions": st["sessions"], "deleted": list(st["deleted"].keys())}
+
+
 def public_config(cfg):
     """Config safe to send to the browser — never echo raw keys."""
     c = json.loads(json.dumps(cfg))   # deep copy
@@ -1935,6 +2017,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, integrations_status(load_config()))
         if path == "/api/integrations/whatsapp/qr":
             return self._send(200, whatsapp_qr_status())
+        if path == "/api/sessions":
+            return self._send(200, list_sessions())
         if path == "/api/import/sessions":
             try:
                 return self._send(200, {"sessions": read_agent_sessions()})
@@ -2043,6 +2127,10 @@ class Handler(BaseHTTPRequestHandler):
                                 key_override=data.get("key") or data.get("deepseek_key"),
                                 base_override=data.get("base_url"))
             return self._send(200, res)
+        if path == "/api/sessions":
+            return self._send(200, merge_sessions(data.get("sessions") or []))
+        if path == "/api/sessions/delete":
+            return self._send(200, delete_session(data.get("id"), data.get("ts") or 0))
         if path == "/api/integrations/save":
             cid = data.get("channel") or data.get("id")
             return self._send(200, save_integration(cid, data.get("values") or {}))
