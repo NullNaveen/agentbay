@@ -33,10 +33,11 @@
   <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
   <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin="anonymous"></script>
   <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
-  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 
-  <script type="text/babel" src="/static/js/bundle.jsx" data-presets="react"></script>
-  <script type="text/babel" data-presets="react">
+  <!-- Precompiled bundle (built from js/bundle.jsx by tools/build.js). No in-browser
+       Babel transpile — the UI loads instantly. Edit the .jsx, then `npm run build`. -->
+  <script src="/static/js/bundle.js"></script>
+  <script>
     try {
       const root = ReactDOM.createRoot(document.getElementById("root"));
       root.render(React.createElement(window.HermesApp));

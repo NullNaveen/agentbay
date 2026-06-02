@@ -1,0 +1,12 @@
+{
+  "name": "agentbay",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Build tooling for the AgentBay UI. Runtime is pure-Python and needs none of this — these dev deps only rebuild the precompiled bundle when you edit the UI source.",
+  "scripts": {
+    "build": "node tools/build.js"
+  },
+  "devDependencies": {
+    "@babel/standalone": "^7.29.0"
+  }
+}
