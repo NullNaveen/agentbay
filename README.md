@@ -98,6 +98,34 @@ Each one starts AgentBay and opens it in your browser. Only Python 3 is needed.
 Everything is stored locally. Your API key lives in `~/.agentbay/config.json`
 (chmod 600) and nothing is sent anywhere except the model provider you pick.
 
+## Troubleshooting
+
+**Windows: the Hermes installer ends with `'charmap' codec can't decode byte …`**
+The Hermes installer's last step (downloading the browser engine) prints output
+that Windows' default text encoding can't read. Force UTF-8 and re-run just that
+step — Hermes itself is already installed:
+```powershell
+$env:PYTHONUTF8 = "1"
+hermes postinstall
+```
+To stop it happening again, set it permanently (then open a new terminal):
+```powershell
+setx PYTHONUTF8 1
+```
+
+**Windows: `python` opens the Microsoft Store instead of running.**
+That's the Store's placeholder. Install real Python from
+[python.org](https://www.python.org/downloads/) with **“Add python.exe to PATH”**
+ticked, or let AgentBay's installer handle it (it uses `winget`).
+
+**The agent replies like a plain chatbot (no terminal/tools).**
+That means AgentBay isn't routed through a running agent. Make sure Hermes is
+installed (Settings → Agent) and its gateway is up:
+```bash
+hermes gateway start    # or: hermes gateway run  (keep the window open)
+```
+Then ask it “run whoami” — a real username back means the agent is live.
+
 ## Configuration
 
 `~/.agentbay/config.json`

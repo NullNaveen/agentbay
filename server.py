@@ -1535,11 +1535,31 @@ def _zip_update(log):
         return None
 
 
+def _is_ec2_shared():
+    """The EC2 multi-user layout: a shared root-owned /opt/agentbay checkout run by
+    per-user systemd services. Detected by the profile env + a self-update script."""
+    return bool(os.environ.get("AGENTBAY_PROFILE")) and (ROOT / "tools" / "ec2-self-update.sh").exists()
+
+
 def run_app_update(job_id):
     def log(line):
         with _job_lock:
             _install_jobs[job_id]["log"].append(line)
     try:
+        if _is_ec2_shared():
+            # Shared checkout we can't write to as our user — pull + restart all the
+            # agentbay@ services through a passwordless sudoers rule. This restarts
+            # our own service too, so we don't os.execv afterwards.
+            log("Updating all AgentBay instances on this server…")
+            script = str(ROOT / "tools" / "ec2-self-update.sh")
+            r = subprocess.run(["sudo", "-n", script],
+                               capture_output=True, text=True, timeout=180)
+            log(((r.stdout or "") + (r.stderr or "")).strip()[:2000])
+            with _job_lock:
+                _install_jobs[job_id]["status"] = "done" if r.returncode == 0 else "error"
+            if r.returncode == 0:
+                log("Updated. Your service is restarting…")
+            return
         if (ROOT / ".git").exists():
             log("$ git pull --ff-only")
             r = _git("pull", "--ff-only")
