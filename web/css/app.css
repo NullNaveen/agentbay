@@ -362,6 +362,9 @@ body.no-anim *::after {
 .md th { background: var(--field-bg-2); font-weight: 650; }
 .md tbody tr:nth-child(even) { background: color-mix(in srgb, var(--text-1) 3%, transparent); }
 .md hr { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
+.md-img { max-width: 100%; height: auto; border-radius: 9px; border: 1px solid var(--border); margin: 6px 0; display: block; }
+.md-mermaid { margin: 10px 0; padding: 12px; background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; overflow-x: auto; text-align: center; }
+.md-mermaid svg { max-width: 100%; height: auto; }
 
 /* code block */
 .codeblock { position: relative; margin: 0 0 14px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }

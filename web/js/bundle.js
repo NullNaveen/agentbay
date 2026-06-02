@@ -686,6 +686,8 @@ That's a lot of water for a moon smaller than ours.`;
     s = s.replace(/`([^`]+)`/g, (_, m) => `<code>${m}</code>`);
     s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
     s = s.replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
+    // images ![alt](url) — must run before the link rule below
+    s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g, '<img class="md-img" alt="$1" src="$2" loading="lazy" />');
     s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
     return s;
   }
@@ -839,6 +841,41 @@ That's a lot of water for a moon smaller than ours.`;
         });
       } else {
         ready = false;
+      }
+    } catch (e) {}
+    // mermaid diagrams: ```mermaid fenced blocks → rendered SVG
+    try {
+      const mer = el.querySelectorAll("code.language-mermaid");
+      if (mer.length) {
+        if (window.mermaid) {
+          const dark = document.documentElement.getAttribute("data-theme") === "dark";
+          try {
+            window.mermaid.initialize({
+              startOnLoad: false,
+              theme: dark ? "dark" : "default",
+              securityLevel: "strict"
+            });
+          } catch (e) {}
+          mer.forEach((c, i) => {
+            const block = c.closest(".codeblock") || c;
+            if (block.dataset.mer) return;
+            block.dataset.mer = "1";
+            const src = c.textContent;
+            const id = "mer-" + Date.now() % 1e7 + "-" + i;
+            Promise.resolve().then(() => window.mermaid.render(id, src)).then(({
+              svg
+            }) => {
+              const d = document.createElement("div");
+              d.className = "md-mermaid";
+              d.innerHTML = svg;
+              if (block.isConnected) block.replaceWith(d);
+            }).catch(() => {
+              delete block.dataset.mer;
+            });
+          });
+        } else {
+          ready = false;
+        }
       }
     } catch (e) {}
     if (!ready) setTimeout(() => enhanceRich(el), 400); // libs still loading
