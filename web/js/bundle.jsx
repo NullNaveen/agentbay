@@ -1201,6 +1201,40 @@ That's a lot of water for a moon smaller than ours.`;
     );
   }
 
+  // ---- WhatsApp QR pairing, rendered live in the UI (reads the gateway bridge) ----
+  function WhatsAppPair({ connected }) {
+    const [st, setSt] = React.useState({ state: "waiting" });
+    React.useEffect(() => {
+      let alive = true;
+      const tick = () => fetch("/api/integrations/whatsapp/qr").then((r) => r.json())
+        .then((d) => { if (alive) setSt(d); }).catch(() => {});
+      tick();
+      const id = setInterval(tick, 2500);
+      return () => { alive = false; clearInterval(id); };
+    }, []);
+    if (!connected && st.state === "off") {
+      return <div style={{ fontSize: 13, color: "var(--text-3)", margin: "10px 0" }}>Press <b>Connect</b> below to start WhatsApp, then a QR code will appear here to scan.</div>;
+    }
+    if (st.state === "paired") {
+      return <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--green)", fontWeight: 600, margin: "12px 0" }}><I.CheckCircle size={18} /> WhatsApp linked — you can message the agent now.</div>;
+    }
+    if (st.state === "qr") {
+      return (
+        <div style={{ margin: "12px 0" }}>
+          <div style={{ fontSize: 13, marginBottom: 8 }}>On your phone: <b>WhatsApp → Settings → Linked Devices → Link a Device</b>, then scan:</div>
+          <pre style={{ display: "inline-block", lineHeight: 1, letterSpacing: 0, fontSize: 9, background: "#fff", color: "#000", padding: 12, borderRadius: 8, margin: 0, fontFamily: "ui-monospace, Menlo, monospace", whiteSpace: "pre" }}>{st.qr}</pre>
+          <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 6 }}>Code refreshes automatically. Keep this open until it links.</div>
+        </div>
+      );
+    }
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-3)", margin: "12px 0" }}>
+        <span className="typing" style={{ height: 12 }}><span /><span /><span /></span>
+        Starting WhatsApp… the QR appears here in ~30s (first run installs its bridge).
+      </div>
+    );
+  }
+
   // ---- Integrations: connect the agent to messaging channels ----
   function IntegrationsPanel({ onToast }) {
     const [data, setData] = React.useState(null);
@@ -1298,12 +1332,7 @@ That's a lot of water for a moon smaller than ours.`;
                 </div>
               )}
 
-              {cur.kind === "qr" && cur.pair_cmd && (
-                <div style={{ fontSize: 13, margin: "10px 0" }}>
-                  After connecting, run this where the agent runs to scan the QR:
-                  <pre style={{ background: "var(--code-bg, #0b0b0b11)", borderRadius: 8, padding: "8px 10px", marginTop: 6, fontSize: 12.5, overflow: "auto" }}><code>{cur.pair_cmd}</code></pre>
-                </div>
-              )}
+              {cur.kind === "qr" && <WhatsAppPair connected={cur.connected} />}
 
               {cur.fields.map((f) => (
                 <div key={f.env} style={{ marginBottom: 12 }}>
@@ -3085,11 +3114,31 @@ Object.assign(window, {
       setDefaultModel((dm) => (dm && ids.includes(dm)) ? dm : (ids[0] || ""));
     }), []);
     useEffect(() => { refreshModels(); }, []);
-    // passively surface an available app update once on load
+    // App self-update: surface an available update as a persistent banner.
+    // Re-checks on load and whenever the tab regains focus (covers reopen/return
+    // without a manual refresh). Assets are served no-store, so a normal reload
+    // after updating always pulls the new UI — no hard refresh needed.
+    const [appUpd, setAppUpd] = useState(null);     // {update_available, latest, current}
+    const [updating, setUpdating] = useState(false);
+    const checkAppUpdate = useCallback(() => {
+      fetch("/api/app/version").then((r) => r.json()).then(setAppUpd).catch(() => {});
+    }, []);
     useEffect(() => {
-      fetch("/api/app/version").then((r) => r.json()).then((d) => {
-        if (d && d.update_available) toast({ type: "info", title: "Update available", desc: "Open Settings → About to update." });
-      }).catch(() => {});
+      checkAppUpdate();
+      const onFocus = () => checkAppUpdate();
+      window.addEventListener("focus", onFocus);
+      document.addEventListener("visibilitychange", onFocus);
+      return () => { window.removeEventListener("focus", onFocus); document.removeEventListener("visibilitychange", onFocus); };
+    }, []);
+    const runAppUpdate = useCallback(() => {
+      setUpdating(true);
+      toast({ type: "info", title: "Updating AgentBay…" });
+      fetch("/api/app/update", { method: "POST" }).then((r) => r.json()).then(({ job }) => {
+        const poll = setInterval(() => fetch("/api/install/status/" + job).then((r) => r.json()).then((j) => {
+          if (j.status === "done") { clearInterval(poll); toast({ type: "success", title: "Updated — reloading…" }); setTimeout(() => location.reload(), 3500); }
+          else if (j.status === "error") { clearInterval(poll); setUpdating(false); toast({ type: "error", title: "Update failed", desc: "Open Settings → About for details." }); }
+        }).catch(() => {}), 1200);
+      }).catch(() => { setUpdating(false); toast({ type: "error", title: "Update failed" }); });
     }, []);
     // show the Skills entry only when the backend is an agent that has skills
     const [skillsCount, setSkillsCount] = useState(0);
@@ -3478,6 +3527,15 @@ Object.assign(window, {
         />
 
         <main className="main">
+          {/* app update banner — appears whenever the running build is behind GitHub */}
+          {appUpd && appUpd.update_available && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", background: "color-mix(in srgb, var(--accent) 14%, var(--surface))", borderBottom: "1px solid var(--border)", fontSize: 13.5 }}>
+              <span style={{ display: "inline-flex", color: "var(--accent-deep)" }}><I.Download size={16} /></span>
+              <span style={{ flex: 1 }}>A new version of AgentBay is available{appUpd.latest ? <span style={{ color: "var(--text-3)" }}> ({appUpd.latest})</span> : null}.</span>
+              <button className="btn btn-primary" style={{ padding: "5px 14px" }} disabled={updating} onClick={runAppUpdate}>{updating ? "Updating…" : "Update now"}</button>
+              <button className="x-btn" aria-label="Dismiss" onClick={() => setAppUpd(null)}><I.X size={16} /></button>
+            </div>
+          )}
           {/* top bar */}
           <div className="topbar">
             <div className="left">

@@ -25,6 +25,7 @@ import ssl
 import subprocess
 import sys
 import tarfile
+import tempfile
 import threading
 import time
 import uuid
@@ -571,11 +572,10 @@ INTEGRATIONS = [
         "docs": "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/whatsapp",
         "const": {"WHATSAPP_ENABLED": "true"},
         "fields": [],
-        "pair_cmd": "hermes whatsapp",
         "guide": [
-            "Press Connect — this enables the WhatsApp channel on your gateway.",
-            "On the machine running the agent, run:  hermes whatsapp",
-            "A QR code prints in the terminal — open WhatsApp → Settings → Linked Devices → Link a Device, and scan it.",
+            "Press Connect — this starts the WhatsApp channel on your gateway.",
+            "A QR code appears here in a few seconds (first run sets up its bridge).",
+            "On your phone: WhatsApp → Settings → Linked Devices → Link a Device → scan the code.",
             "Once linked, message that number from another phone to reach the agent.",
         ],
     },
@@ -826,6 +826,61 @@ def save_integration(cid, values):
         return {"ok": False, "error": "could not write gateway .env"}
     restarted = restart_gateway()
     return {"ok": True, "restarted": restarted, "channel": cid}
+
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+_QR_BLOCK = set("▀▄██░▒▓ \xa0")   # ▀ ▄ █ shades + space
+
+
+def _whatsapp_dir():
+    """The gateway's WhatsApp state dir (new layout, with legacy fallback)."""
+    he = os.environ.get("HERMES_HOME")
+    base = Path(he) if he else (_gateway_config_path().parent if _gateway_config_path() else Path.home() / ".hermes")
+    new = base / "platforms" / "whatsapp"
+    legacy = base / "whatsapp"
+    return legacy if (legacy / "bridge.log").exists() or (legacy / "session").exists() else new
+
+
+def _extract_qr_ascii(text):
+    """Pull the most recent ASCII QR (qrcode-terminal output) out of bridge.log."""
+    idx = text.rfind("Scan this QR")
+    if idx == -1:
+        return ""
+    lines = text[idx:].splitlines()[1:]     # drop the marker line itself
+    out = []
+    for ln in lines:
+        s = _ANSI_RE.sub("", ln).rstrip("\n")
+        body = s.strip()
+        if not body:
+            if out:
+                break                        # blank line after the QR → done
+            continue
+        if all((ch in _QR_BLOCK) for ch in s):
+            out.append(s.rstrip())
+        elif out:
+            break                            # a normal log line → QR finished
+    return "\n".join(out)
+
+
+def whatsapp_qr_status():
+    """State of the WhatsApp pairing bridge for the UI:
+    paired (creds present) / qr (scan it) / waiting (bridge starting) / off."""
+    wd = _whatsapp_dir()
+    creds = wd / "session" / "creds.json"
+    if creds.exists():
+        return {"state": "paired"}
+    env = read_gateway_env()
+    enabled = (env.get("WHATSAPP_ENABLED", "").lower() in ("true", "1", "yes"))
+    log = wd / "bridge.log"
+    if log.exists():
+        try:
+            text = log.read_text(errors="ignore")[-20000:]
+        except Exception:
+            text = ""
+        qr = _extract_qr_ascii(text)
+        if qr:
+            return {"state": "qr", "qr": qr}
+    return {"state": "waiting" if enabled else "off"}
 
 
 def disconnect_integration(cid):
@@ -1275,34 +1330,73 @@ def _git(*args, timeout=60):
     return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True, timeout=timeout)
 
 
+# Records the installed commit for installs that aren't git checkouts (zip/tarball,
+# the default on Windows). The installer writes it; we also self-heal on startup.
+_BUILD_FILE = ROOT / ".agentbay-build"
+
+
 def _app_local_sha():
     if (ROOT / ".git").exists():
         try:
             r = _git("rev-parse", "HEAD")
-            return r.stdout.strip() or None
+            if r.stdout.strip():
+                return r.stdout.strip()
         except Exception:
-            return None
+            pass
+    try:
+        if _BUILD_FILE.is_file():
+            return (_BUILD_FILE.read_text().strip() or None)
+    except Exception:
+        pass
     return None
+
+
+def _write_build_sha(sha):
+    try:
+        if sha:
+            _BUILD_FILE.write_text(sha.strip() + "\n")
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _github_latest_sha(timeout=15):
+    req = urllib.request.Request("https://api.github.com/repos/%s/commits/main" % APP_REPO,
+                                 headers={"User-Agent": "AgentBay", "Accept": "application/vnd.github.sha"})
+    return _urlopen(req, timeout).read().decode().strip()
+
+
+def baseline_build_marker():
+    """For non-git installs with no build marker (legacy zip installs, hand copies),
+    record the current upstream sha once so update tracking works going forward."""
+    if (ROOT / ".git").exists() or _BUILD_FILE.is_file():
+        return
+    try:
+        _write_build_sha(_github_latest_sha())
+    except Exception:
+        pass
 
 
 def app_version():
     sha = _app_local_sha()
     if sha:
-        try:
-            n = _git("rev-list", "--count", "HEAD").stdout.strip()
-        except Exception:
-            n = ""
+        n = ""
+        if (ROOT / ".git").exists():
+            try:
+                n = _git("rev-list", "--count", "HEAD").stdout.strip()
+            except Exception:
+                n = ""
         return (("r" + n + " · ") if n else "") + sha[:7]
     return "source"
 
 
 def app_update_status():
     local = _app_local_sha()
-    out = {"current": app_version(), "is_git": bool(local), "update_available": False}
+    out = {"current": app_version(), "is_git": (ROOT / ".git").exists(),
+           "tracked": bool(local), "update_available": False}
     try:
-        req = urllib.request.Request("https://api.github.com/repos/%s/commits/main" % APP_REPO,
-                                     headers={"User-Agent": "AgentBay", "Accept": "application/vnd.github.sha"})
-        latest = _urlopen(req, 15).read().decode().strip()
+        latest = _github_latest_sha()
         out["latest"] = latest[:7]
         if local and latest:
             out["update_available"] = (local != latest)
@@ -1311,20 +1405,53 @@ def app_update_status():
     return out
 
 
+def _zip_update(log):
+    """Update a non-git install by re-downloading the repo zip over ROOT.
+    Returns the new sha on success, raises on failure."""
+    import zipfile
+    url = "https://github.com/%s/archive/refs/heads/main.zip" % APP_REPO
+    log("$ download " + url)
+    data = _urlopen(urllib.request.Request(url, headers={"User-Agent": "AgentBay"}), 180).read()
+    tmp = Path(tempfile.mkdtemp(prefix="agentbay-upd-"))
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            z.extractall(tmp)
+        inner = next((p for p in tmp.iterdir() if p.is_dir()), None)
+        if not inner:
+            raise RuntimeError("unexpected zip layout")
+        log("$ apply files")
+        for item in inner.iterdir():
+            if item.name in (".git", ".agentbay-build"):
+                continue
+            dst = ROOT / item.name
+            if item.is_dir():
+                shutil.copytree(item, dst, dirs_exist_ok=True)
+            else:
+                shutil.copy2(item, dst)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    try:
+        sha = _github_latest_sha()
+        _write_build_sha(sha)
+        return sha
+    except Exception:
+        return None
+
+
 def run_app_update(job_id):
     def log(line):
         with _job_lock:
             _install_jobs[job_id]["log"].append(line)
     try:
-        if not (ROOT / ".git").exists():
-            log("This install isn't a git checkout — re-run the installer to update.")
-            with _job_lock:
-                _install_jobs[job_id]["status"] = "error"
-            return
-        log("$ git pull --ff-only")
-        r = _git("pull", "--ff-only")
-        log(((r.stdout or "") + (r.stderr or "")).strip()[:2000])
-        ok = r.returncode == 0
+        if (ROOT / ".git").exists():
+            log("$ git pull --ff-only")
+            r = _git("pull", "--ff-only")
+            log(((r.stdout or "") + (r.stderr or "")).strip()[:2000])
+            ok = r.returncode == 0
+        else:
+            log("Updating (zip install)…")
+            _zip_update(log)
+            ok = True
         with _job_lock:
             _install_jobs[job_id]["status"] = "done" if ok else "error"
         if ok:
@@ -1727,6 +1854,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"models": enabled_models(load_config())})
         if path == "/api/integrations":
             return self._send(200, integrations_status(load_config()))
+        if path == "/api/integrations/whatsapp/qr":
+            return self._send(200, whatsapp_qr_status())
         if path == "/api/import/sessions":
             try:
                 return self._send(200, {"sessions": read_agent_sessions()})
@@ -1923,6 +2052,10 @@ def main():
 
     port = free_port(args.host, args.port)
     SERVER["host"], SERVER["port"] = args.host, port
+
+    # Non-git installs (zip/tarball) carry no HEAD to compare against — record the
+    # current upstream commit once so the in-app "update available" check works.
+    threading.Thread(target=baseline_build_marker, daemon=True).start()
 
     # Onboarding: make the share-link tool available on every machine (any OS).
     # One-time, in the background, only if missing — so "Remote access" just works.

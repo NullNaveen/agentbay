@@ -48,6 +48,13 @@ if (Test-Path "$AppDir\.git") {
   Copy-Item "$env:TEMP\agentbay-x\agentbay-main\*" $AppDir -Recurse -Force
 }
 
+# 2b. record the installed commit (so the in-app update check works for zip installs)
+try {
+  $sha = (Invoke-WebRequest -UseBasicParsing -Headers @{ Accept = "application/vnd.github.sha" } `
+    -Uri "https://api.github.com/repos/$Repo/commits/main").Content.Trim()
+  if ($sha) { Set-Content -Path "$AppDir\.agentbay-build" -Value $sha -NoNewline }
+} catch { }
+
 # 3. launch (server falls back to the next free port if $Port is taken,
 #    then prints the real URL + opens your browser)
 Say "starting AgentBay… it will open in your browser"

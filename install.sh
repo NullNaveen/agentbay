@@ -48,6 +48,11 @@ else
   fi
 fi
 
+# 2b. record the installed commit (so the in-app update check works for zip installs)
+SHA="$(curl -fsSL -H 'Accept: application/vnd.github.sha' \
+  "https://api.github.com/repos/$REPO/commits/main" 2>/dev/null || true)"
+[ -n "$SHA" ] && printf '%s\n' "$SHA" > "$APP_DIR/.agentbay-build" || true
+
 # 3. launch (server falls back to the next free port if $PORT is taken,
 #    then prints the real URL + opens your browser)
 say "starting AgentBay… it will open in your browser"

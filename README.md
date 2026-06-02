@@ -25,7 +25,39 @@ cd agentbay
 python3 server.py
 ```
 
-It starts a local server and opens `http://127.0.0.1:8700`.
+It starts a local server and opens `http://127.0.0.1:8700`. If that port is
+busy it picks the next free one and prints the real URL. No Python? The
+installer sets it up for you (winget on Windows, your package manager / Homebrew
+on Linux & macOS).
+
+## Update
+
+In the app, an **"Update available"** banner appears whenever a new version is on
+GitHub — click **Update now** and it updates itself and reloads. You can also use
+**Settings → About → Check for updates**.
+
+For the terminal:
+```bash
+# if you installed with the one-liner (re-runs the installer, pulls latest)
+curl -fsSL https://raw.githubusercontent.com/NullNaveen/agentbay/main/install.sh | bash   # macOS/Linux
+irm https://raw.githubusercontent.com/NullNaveen/agentbay/main/install.ps1 | iex          # Windows
+
+# if you cloned it
+cd agentbay && git pull && python3 server.py
+```
+
+## Uninstall
+
+AgentBay is self-contained — delete its folder. Nothing is installed system-wide.
+```bash
+# macOS / Linux
+rm -rf ~/.agentbay
+
+# Windows (PowerShell)
+Remove-Item -Recurse -Force "$HOME\.agentbay"
+```
+`~/.agentbay/app` is the code; `~/.agentbay/config.json` holds your settings/keys.
+To reinstall fresh, remove the folder then run the install one-liner again.
 
 ### No terminal? Just double-click
 
