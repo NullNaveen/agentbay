@@ -8,12 +8,30 @@ $Port   = if ($env:AGENTBAY_PORT) { $env:AGENTBAY_PORT } else { "8700" }
 function Say($m){ Write-Host "[agentbay] $m" -ForegroundColor Yellow }
 
 # 1. need python  (PowerShell 5.1-compatible: no ?? operator)
-$py = $null
-foreach ($cmd in @("py","python","python3")) {
-  $c = Get-Command $cmd -ErrorAction SilentlyContinue
-  if ($c) { $py = $c; break }
+function Find-Python {
+  foreach ($cmd in @("py","python","python3")) {
+    $c = Get-Command $cmd -ErrorAction SilentlyContinue
+    if (-not $c) { continue }
+    # skip the Microsoft Store execution-alias stub (it only redirects to the Store)
+    if ($c.Source -and $c.Source -like "*\WindowsApps\*") { continue }
+    try { $v = & $c.Source --version 2>&1 } catch { continue }
+    if ("$v" -match "Python 3") { return $c }
+  }
+  return $null
 }
-if (-not $py) { Write-Error "Python 3 is required. Install from https://python.org (tick 'Add to PATH') and re-run."; exit 1 }
+$py = Find-Python
+if (-not $py) {
+  $wg = Get-Command winget -ErrorAction SilentlyContinue
+  if ($wg) {
+    Say "Python 3 not found — installing it via winget…"
+    winget install -e --id Python.Python.3.12 --accept-source-agreements --accept-package-agreements --silent
+    # refresh PATH for this session so the freshly-installed 'py' launcher resolves
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+    $py = Find-Python
+  }
+}
+if (-not $py) { Write-Error "Python 3 is required. Install it from https://python.org (tick 'Add python.exe to PATH'), open a NEW terminal, and re-run this command."; exit 1 }
+Say "using $($py.Source)"
 
 # 2. fetch / update
 New-Item -ItemType Directory -Force -Path (Split-Path $AppDir) | Out-Null
