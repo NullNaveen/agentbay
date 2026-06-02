@@ -9,10 +9,28 @@ PORT="${AGENTBAY_PORT:-8700}"
 
 say(){ printf "\033[33m[agentbay]\033[0m %s\n" "$*"; }
 
-# 1. need python3
+# 1. need python3 — auto-install it if missing
+install_python() {
+  say "Python 3 not found — installing it…"
+  if [ "$(uname)" = "Darwin" ]; then
+    if command -v brew >/dev/null 2>&1; then brew install python3 && return 0; fi
+    say "Homebrew not found. Install Python 3 from https://www.python.org/downloads/macos/ and re-run."
+    return 1
+  fi
+  # Linux: try the available package manager (use sudo only if not already root)
+  SUDO=""; [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1 && SUDO="sudo"
+  if   command -v apt-get >/dev/null 2>&1; then $SUDO apt-get update -y && $SUDO apt-get install -y python3
+  elif command -v dnf     >/dev/null 2>&1; then $SUDO dnf install -y python3
+  elif command -v yum     >/dev/null 2>&1; then $SUDO yum install -y python3
+  elif command -v pacman  >/dev/null 2>&1; then $SUDO pacman -Sy --noconfirm python
+  elif command -v zypper  >/dev/null 2>&1; then $SUDO zypper install -y python3
+  elif command -v apk     >/dev/null 2>&1; then $SUDO apk add python3
+  else say "No supported package manager found. Install Python 3 manually and re-run."; return 1
+  fi
+}
 if ! command -v python3 >/dev/null 2>&1; then
-  echo "Python 3 is required. Install it (e.g. 'brew install python3' or 'apt install python3') and re-run."
-  exit 1
+  install_python || exit 1
+  command -v python3 >/dev/null 2>&1 || { echo "Python 3 install did not complete. Install it manually and re-run."; exit 1; }
 fi
 
 # 2. fetch / update the app
@@ -30,6 +48,7 @@ else
   fi
 fi
 
-# 3. launch
-say "starting AgentBay on http://127.0.0.1:$PORT …"
+# 3. launch (server falls back to the next free port if $PORT is taken,
+#    then prints the real URL + opens your browser)
+say "starting AgentBay… it will open in your browser"
 exec python3 "$APP_DIR/server.py" --port "$PORT"

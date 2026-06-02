@@ -2115,7 +2115,86 @@ That's a lot of water for a moon smaller than ours.`;
     );
   }
 
-  window.Views = { Login, ModelMenu, Notes, Tour };
+  /* ---------- Onboarding gate: AgentBay needs a real agent to be more than a chatbot ----------
+     Shows when no agent is detected on this machine. Guides install; if the user
+     skips, it warns that AgentBay will act as a plain chatbot (no tools/terminal)
+     and re-appears on the next launch until an agent is actually installed. */
+  function OnboardingGate({ onInstalled, onSkip }) {
+    const [agents, setAgents] = useState(null);   // null = checking
+    const [busy, setBusy] = useState(null);        // agent id currently installing
+    const [log, setLog] = useState("");
+    const load = () => fetch("/api/agents").then((r) => r.json()).then((d) => {
+      const list = d.agents || [];
+      setAgents(list);
+      if (list.some((a) => a.installed)) onInstalled && onInstalled();
+      return list;
+    }).catch(() => setAgents([]));
+    useEffect(() => { load(); }, []);
+
+    const install = (aid) => {
+      setBusy(aid); setLog("Starting install of " + aid + "…\n");
+      fetch("/api/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agent: aid }) })
+        .then((r) => r.json()).then(({ job }) => {
+          if (!job) { setBusy(null); setLog("Could not start installer."); return; }
+          const poll = setInterval(() => fetch("/api/install/status/" + job).then((r) => r.json()).then((st) => {
+            setLog((st.log || []).join("\n"));
+            if (st.status === "done" || st.status === "error") {
+              clearInterval(poll); setBusy(null);
+              load();   // flips to installed → onInstalled() closes the gate
+            }
+          }), 1200);
+        }).catch(() => { setBusy(null); setLog("Install request failed."); });
+    };
+
+    if (agents === null) return null;                       // still checking — no flash
+    if (agents.some((a) => a.installed)) return null;        // gate passed
+
+    return (
+      <div className="overlay" style={{ alignItems: "center" }}>
+        <div className="overlay-scrim" />
+        <div className="modal" style={{ position: "relative", width: "min(560px, 94vw)", margin: "auto", padding: 26 }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+            <span style={{ display: "inline-flex", width: 44, height: 44 }}><window.HermesGlyph size={44} /></span>
+            <div>
+              <h2 style={{ margin: 0, fontSize: 20 }}>Welcome to AgentBay</h2>
+              <div style={{ fontSize: 13, color: "var(--text-3)" }}>Let's connect a real agent first.</div>
+            </div>
+          </div>
+
+          <div style={{ border: "1px solid var(--amber)", background: "color-mix(in srgb, var(--amber) 9%, transparent)", borderRadius: 11, padding: "11px 13px", margin: "14px 0", fontSize: 13.5, lineHeight: 1.5 }}>
+            <b>No agent detected on this computer.</b> AgentBay is a front-end for an
+            agent (Hermes). Without one, every model here is a <b>plain chatbot</b> —
+            no terminal, no web, no files, no tools. Install an agent to unlock all of it.
+          </div>
+
+          {agents.map((a) => (
+            <div key={a.agent} style={{ display: "flex", alignItems: "center", gap: 10, border: "1px solid var(--border)", borderRadius: 11, padding: 13, marginTop: 10 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 650 }}>{a.label}</div>
+                <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>{a.installed ? "✓ installed" : "not installed — one click to set up"}</div>
+              </div>
+              {!a.installed && (
+                <button className="btn btn-primary" disabled={!!busy} onClick={() => install(a.agent)}>
+                  {busy === a.agent ? "Installing…" : "Install"}
+                </button>
+              )}
+            </div>
+          ))}
+
+          {log && <pre style={{ marginTop: 12, maxHeight: 160, overflow: "auto", background: "#0c0c10", color: "#cfe", padding: 12, borderRadius: 10, fontSize: 12, whiteSpace: "pre-wrap" }}>{log}</pre>}
+
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 18 }}>
+            <a href="https://hermes-agent.nousresearch.com/docs/getting-started/quickstart" target="_blank" rel="noreferrer" style={{ fontSize: 12.5, color: "var(--accent-deep)" }}>What's an agent? →</a>
+            <button className="btn btn-ghost" disabled={!!busy} onClick={onSkip} title="AgentBay will work as a plain chatbot until you install an agent">
+              Skip — use as a chatbot
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  window.Views = { Login, ModelMenu, Notes, Tour, OnboardingGate };
 })();
 
 
@@ -3036,6 +3115,15 @@ Object.assign(window, {
     const [renameVal, setRenameVal] = useState("");
     const [tour, setTour] = useLocal("hermes_tour_done", false);
     const [showTour, setShowTour] = useState(false);
+    // Onboarding agent-gate: re-checked every launch (session-scoped skip, not persisted)
+    const [hasAgent, setHasAgent] = useState(null);   // null = unknown
+    const [onboardSkipped, setOnboardSkipped] = useState(false);
+    useEffect(() => {
+      if (!loggedIn) return;
+      fetch("/api/agents").then((r) => r.json())
+        .then((d) => setHasAgent((d.agents || []).some((a) => a.installed)))
+        .catch(() => setHasAgent(false));
+    }, [loggedIn]);
 
     const topModelRef = useRef(null);
     const headModelRef = useRef(null);
@@ -3077,10 +3165,10 @@ Object.assign(window, {
 
     const setS = (k, v) => setSettings((s) => ({ ...s, [k]: v }));
 
-    /* ---- first-login tour (no auto-popups) ---- */
+    /* ---- first-login tour — only once the agent gate is resolved (don't tour over it) ---- */
     useEffect(() => {
-      if (loggedIn && !tour) { setShowTour(true); setTour(true); }
-    }, [loggedIn]);
+      if (loggedIn && !tour && (hasAgent === true || onboardSkipped)) { setShowTour(true); setTour(true); }
+    }, [loggedIn, hasAgent, onboardSkipped]);
 
     /* ---- keyboard shortcuts ---- */
     useEffect(() => {
@@ -3512,6 +3600,13 @@ Object.assign(window, {
         )}
         {pop && pop.kind === "export" && (
           <Mo.ExportMenu anchorRef={pop.anchor} onClose={() => setPop(null)} onPick={doExport} />
+        )}
+
+        {/* ===== onboarding agent-gate (before the tour) ===== */}
+        {loggedIn && hasAgent === false && !onboardSkipped && (
+          <V.OnboardingGate
+            onInstalled={() => { setHasAgent(true); toast({ type: "success", title: "Agent installed", desc: "Every model now runs with full tools." }); }}
+            onSkip={() => setOnboardSkipped(true)} />
         )}
 
         {/* ===== tour ===== */}

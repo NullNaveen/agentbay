@@ -48,6 +48,7 @@ if (Test-Path "$AppDir\.git") {
   Copy-Item "$env:TEMP\agentbay-x\agentbay-main\*" $AppDir -Recurse -Force
 }
 
-# 3. launch
-Say "starting AgentBay on http://127.0.0.1:$Port …"
+# 3. launch (server falls back to the next free port if $Port is taken,
+#    then prints the real URL + opens your browser)
+Say "starting AgentBay… it will open in your browser"
 & $py.Source "$AppDir\server.py" --port $Port
