@@ -352,11 +352,16 @@ def resolve_provider(cfg, pid=None, model=None):
     p = cfg.get("providers", {}).get(pid, {})
     enabled = p.get("models", [])
     mdl = model or cfg.get("active_model") or (enabled[0] if enabled else spec["default_model"])
-    return pid, spec, {
-        "key": p.get("key", ""),
-        "model": mdl,
-        "base_url": (p.get("base_url") or spec["base_url"]).rstrip("/"),
-    }
+    base = (p.get("base_url") or spec["base_url"]).rstrip("/")
+    # Local servers (Ollama/LM Studio) expose the OpenAI API at /v1 — if the user
+    # pasted just host:port, add it so both fetch and chat work.
+    if pid == "local" and not base.endswith("/v1"):
+        try:
+            if urllib.parse.urlparse(base).path in ("", "/"):
+                base += "/v1"
+        except Exception:
+            pass
+    return pid, spec, {"key": p.get("key", ""), "model": mdl, "base_url": base}
 
 
 # ---- project knowledge: extract text from any uploaded file ---------------
@@ -2008,13 +2013,43 @@ def _agent_gateway(cfg):
 _GW_START = {"tried": False}
 
 
+def _hermes_env_file(hb):
+    """Locate the Hermes .env (where the gateway reads API_SERVER_ENABLED etc.).
+    Ask the binary; fall back to the standard locations."""
+    try:
+        r = subprocess.run([hb, "config", "env-path"], capture_output=True, text=True, timeout=15)
+        p = (r.stdout or "").strip().splitlines()[-1].strip() if r.stdout else ""
+        if p:
+            return Path(p)
+    except Exception:
+        pass
+    he = os.environ.get("HERMES_HOME")
+    return (Path(he) / ".env") if he else (Path.home() / ".hermes" / ".env")
+
+
+def _enable_hermes_api_server(hb):
+    """Turn ON the gateway's OpenAI endpoint (it's opt-in). Without this a fresh
+    Hermes serves no /v1, so AgentBay can't route chat through the agent."""
+    try:
+        envf = _hermes_env_file(hb)
+        envf.parent.mkdir(parents=True, exist_ok=True)
+        text = envf.read_text() if envf.is_file() else ""
+        if "API_SERVER_ENABLED" not in text:
+            with open(envf, "a", encoding="utf-8") as f:
+                if text and not text.endswith("\n"):
+                    f.write("\n")
+                f.write("API_SERVER_ENABLED=true\nAPI_SERVER_PORT=8642\n")
+    except Exception:
+        pass
+
+
 def ensure_local_gateway():
-    """If Hermes is installed but its agent API isn't up yet, start it in the
-    background (best-effort) so a standalone install behaves as the agent without
-    the user running a command. On macOS/Linux `gateway start` installs+starts the
-    launchd/systemd service; on other setups it's a no-op the user can do manually."""
-    if _GW_START["tried"]:
-        return
+    """Make a locally-installed Hermes serve its agent API so AgentBay behaves as
+    the agent (tools/terminal), not a cloud chatbot. Enables the opt-in OpenAI
+    endpoint, then starts the gateway. `gateway start` needs systemd/launchd (so it
+    fails on Windows) — there we run it directly in a hidden background process."""
+    if _GW_START["tried"] or os.environ.get("AGENTBAY_PROFILE"):
+        return                                      # EC2: gateway is systemd-managed, leave it
     _GW_START["tried"] = True
     try:
         if detect_local_gateway(ttl=0):
@@ -2022,8 +2057,17 @@ def ensure_local_gateway():
         hb = which("hermes")
         if not hb:
             return
-        subprocess.Popen([hb, "gateway", "start"],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        _enable_hermes_api_server(hb)
+        if os.name == "nt":
+            # Windows has no service manager — run the gateway in the background
+            # (console hidden by the global Popen patch). --replace avoids dup.
+            subprocess.Popen([hb, "gateway", "run", "--replace"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            r = subprocess.run([hb, "gateway", "start"], capture_output=True, text=True, timeout=30)
+            if r.returncode != 0:
+                subprocess.Popen([hb, "gateway", "run", "--replace"],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
 
@@ -2277,12 +2321,37 @@ def list_models(spec, base, key):
             d = json.loads(r.read())
         return [m.get("id") for m in d.get("data", []) if m.get("id")]   # already chat-only
     headers = {"Authorization": f"Bearer {key}"} if key else {}
-    req = urllib.request.Request(base + "/models", headers=headers)
-    with _urlopen(req, 20) as r:
-        d = json.loads(r.read())
-    items = d.get("data") if isinstance(d, dict) else (d if isinstance(d, list) else [])
-    ids = [m.get("id") for m in (items or []) if isinstance(m, dict) and m.get("id")]
-    return [m for m in ids if not _NON_CHAT_RE.search(m)]
+    # Be forgiving about the base URL: many people paste an Ollama/LM-Studio host
+    # without the /v1 suffix. Try /models as given, then /v1/models, then Ollama's
+    # native /api/tags — so "http://host:11434" just works.
+    cands = [base + "/models"]
+    if not base.endswith("/v1"):
+        cands.append(base + "/v1/models")
+    last = None
+    for url in cands:
+        try:
+            with _urlopen(urllib.request.Request(url, headers=headers), 20) as r:
+                d = json.loads(r.read())
+            items = d.get("data") if isinstance(d, dict) else (d if isinstance(d, list) else [])
+            ids = [m.get("id") for m in (items or []) if isinstance(m, dict) and m.get("id")]
+            if ids:
+                return [m for m in ids if not _NON_CHAT_RE.search(m)]
+        except Exception as e:
+            last = e
+    # Ollama native API
+    try:
+        tb = base[:-3].rstrip("/") if base.endswith("/v1") else base
+        with _urlopen(urllib.request.Request(tb + "/api/tags", headers=headers), 20) as r:
+            d = json.loads(r.read())
+        ids = [(m.get("name") or m.get("model")) for m in d.get("models", []) if isinstance(m, dict)]
+        ids = [i for i in ids if i]
+        if ids:
+            return [m for m in ids if not _NON_CHAT_RE.search(m)]
+    except Exception as e:
+        last = e
+    if last:
+        raise last
+    return []
 
 
 def test_provider(cfg, provider, key_override=None, base_override=None):
