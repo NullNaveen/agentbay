@@ -1538,9 +1538,19 @@ That's a lot of water for a moon smaller than ours.`;
   function AboutPanel({ onToast }) {
     const [v, setV] = React.useState(null);
     const [busy, setBusy] = React.useState(false);
+    const [checking, setChecking] = React.useState(false);
     const [log, setLog] = React.useState(null);
     const load = () => { setV(null); fetch("/api/app/version").then((r) => r.json()).then(setV).catch(() => setV({ current: "?", error: "offline" })); };
     React.useEffect(() => { load(); }, []);
+    const check = () => {
+      setChecking(true);
+      fetch("/api/app/version").then((r) => r.json()).then((d) => {
+        setV(d); setChecking(false);
+        if (d.error) onToast({ type: "error", title: "Couldn't check", desc: "You may be offline." });
+        else if (d.update_available) onToast({ type: "info", title: "Update available", desc: (d.latest || "") + " — click Update now." });
+        else onToast({ type: "success", title: "You're on the latest version" });
+      }).catch(() => { setChecking(false); onToast({ type: "error", title: "Couldn't check for updates", desc: "You may be offline." }); });
+    };
     const update = () => {
       setBusy(true); setLog(["Updating…"]);
       fetch("/api/app/update", { method: "POST" }).then((r) => r.json()).then(({ job }) => {
@@ -1561,13 +1571,12 @@ That's a lot of water for a moon smaller than ours.`;
             <div style={{ color: "var(--accent-deep)", fontSize: 13.5, marginBottom: 10 }}>↑ A new version is available{v.latest ? " (" + v.latest + ")" : ""}.</div>
             <button className="btn btn-primary" disabled={busy} onClick={update}>{busy ? "Updating…" : "Update now"}</button>
           </div>
-        ) : v && v.is_git ? (
-          <div style={{ marginTop: 18 }}>
-            <div style={{ color: "var(--green)", fontSize: 13.5, marginBottom: 10 }}>You're on the latest version.</div>
-            <button className="btn btn-outline" onClick={load}>Check again</button>
-          </div>
         ) : (
-          <button className="btn btn-outline" style={{ marginTop: 18 }} onClick={load}>Check for updates</button>
+          <div style={{ marginTop: 18 }}>
+            {v && !v.error && <div style={{ color: "var(--green)", fontSize: 13.5, marginBottom: 10 }}>You're on the latest version.</div>}
+            {v && v.error && <div style={{ color: "var(--text-3)", fontSize: 13.5, marginBottom: 10 }}>Couldn't reach GitHub to check.</div>}
+            <button className="btn btn-outline" disabled={checking} onClick={check}>{checking ? "Checking…" : "Check for updates"}</button>
+          </div>
         )}
         {log && <pre style={{ marginTop: 14, maxHeight: 160, overflow: "auto", background: "#0c0c10", color: "#cfe", padding: 12, borderRadius: 10, fontSize: 12, whiteSpace: "pre-wrap", textAlign: "left" }}>{log.join("\n")}</pre>}
       </div>

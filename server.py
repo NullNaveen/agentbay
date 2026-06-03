@@ -33,6 +33,28 @@ import urllib.request
 import urllib.error
 import urllib.parse
 import webbrowser
+
+# On Windows, every subprocess.Popen/run normally flashes a console window. AgentBay
+# runs many (git, hermes, pip, playwright, cloudflared, …), so without this the user
+# sees terminals pop open and close. Patch Popen once to hide the window — run()
+# uses Popen internally, so this covers everything, including launch from the icon.
+if os.name == "nt":
+    _CREATE_NO_WINDOW = 0x08000000
+    _orig_popen = subprocess.Popen
+
+    class _HiddenPopen(_orig_popen):
+        def __init__(self, *args, **kwargs):
+            kwargs["creationflags"] = kwargs.get("creationflags", 0) | _CREATE_NO_WINDOW
+            try:
+                si = kwargs.get("startupinfo") or subprocess.STARTUPINFO()
+                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                si.wShowWindow = 0  # SW_HIDE
+                kwargs["startupinfo"] = si
+            except Exception:
+                pass
+            super().__init__(*args, **kwargs)
+
+    subprocess.Popen = _HiddenPopen
 import zipfile
 import html as _html
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer

@@ -3320,6 +3320,7 @@ That's a lot of water for a moon smaller than ours.`;
   }) {
     const [v, setV] = React.useState(null);
     const [busy, setBusy] = React.useState(false);
+    const [checking, setChecking] = React.useState(false);
     const [log, setLog] = React.useState(null);
     const load = () => {
       setV(null);
@@ -3331,6 +3332,32 @@ That's a lot of water for a moon smaller than ours.`;
     React.useEffect(() => {
       load();
     }, []);
+    const check = () => {
+      setChecking(true);
+      fetch("/api/app/version").then(r => r.json()).then(d => {
+        setV(d);
+        setChecking(false);
+        if (d.error) onToast({
+          type: "error",
+          title: "Couldn't check",
+          desc: "You may be offline."
+        });else if (d.update_available) onToast({
+          type: "info",
+          title: "Update available",
+          desc: (d.latest || "") + " — click Update now."
+        });else onToast({
+          type: "success",
+          title: "You're on the latest version"
+        });
+      }).catch(() => {
+        setChecking(false);
+        onToast({
+          type: "error",
+          title: "Couldn't check for updates",
+          desc: "You may be offline."
+        });
+      });
+    };
     const update = () => {
       setBusy(true);
       setLog(["Updating…"]);
@@ -3400,26 +3427,27 @@ That's a lot of water for a moon smaller than ours.`;
       className: "btn btn-primary",
       disabled: busy,
       onClick: update
-    }, busy ? "Updating…" : "Update now")) : v && v.is_git ? /*#__PURE__*/React.createElement("div", {
+    }, busy ? "Updating…" : "Update now")) : /*#__PURE__*/React.createElement("div", {
       style: {
         marginTop: 18
       }
-    }, /*#__PURE__*/React.createElement("div", {
+    }, v && !v.error && /*#__PURE__*/React.createElement("div", {
       style: {
         color: "var(--green)",
         fontSize: 13.5,
         marginBottom: 10
       }
-    }, "You're on the latest version."), /*#__PURE__*/React.createElement("button", {
-      className: "btn btn-outline",
-      onClick: load
-    }, "Check again")) : /*#__PURE__*/React.createElement("button", {
-      className: "btn btn-outline",
+    }, "You're on the latest version."), v && v.error && /*#__PURE__*/React.createElement("div", {
       style: {
-        marginTop: 18
-      },
-      onClick: load
-    }, "Check for updates"), log && /*#__PURE__*/React.createElement("pre", {
+        color: "var(--text-3)",
+        fontSize: 13.5,
+        marginBottom: 10
+      }
+    }, "Couldn't reach GitHub to check."), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-outline",
+      disabled: checking,
+      onClick: check
+    }, checking ? "Checking…" : "Check for updates")), log && /*#__PURE__*/React.createElement("pre", {
       style: {
         marginTop: 14,
         maxHeight: 160,

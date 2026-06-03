@@ -28,12 +28,28 @@ def main():
         if _up(p):
             webbrowser.open("http://127.0.0.1:%d/" % p)
             return
-    # Not running — start the server; it opens the browser when ready.
+    # Not running — start the server in the background; it opens the browser when
+    # ready. On Windows, hide the console window and detach so nothing flashes.
     server = os.path.join(HERE, "server.py")
+    kw = {"cwd": HERE}
+    if os.name == "nt":
+        kw["creationflags"] = 0x08000000 | 0x00000008  # CREATE_NO_WINDOW | DETACHED_PROCESS
+        try:
+            si = subprocess.STARTUPINFO()
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            si.wShowWindow = 0
+            kw["startupinfo"] = si
+        except Exception:
+            pass
+    # Prefer pythonw on Windows so the server itself has no console.
+    exe = sys.executable
+    if os.name == "nt":
+        cand = os.path.join(os.path.dirname(exe), "pythonw.exe")
+        if os.path.exists(cand):
+            exe = cand
     try:
-        subprocess.Popen([sys.executable, server, "--port", str(PORT)], cwd=HERE)
+        subprocess.Popen([exe, server, "--port", str(PORT)], **kw)
     except Exception:
-        # last resort: run in the foreground
         os.execv(sys.executable, [sys.executable, server, "--port", str(PORT)])
 
 
