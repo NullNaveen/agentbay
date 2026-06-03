@@ -2102,14 +2102,27 @@ def _acp_save_map(m):
         pass
 
 
-def _acp_available():
-    """Use ACP for a locally-installed Hermes (standalone desktop). The multi-user
-    EC2 layout (detected via the agentbay-home/profile signal) keeps the gateway."""
+def _is_multiuser_ec2():
+    """The shared EC2 deployment — precise signals only, so we don't mistake a
+    standalone desktop (which may set HERMES_HOME) for the server."""
+    if os.environ.get("AGENTBAY_PROFILE"):
+        return True
     try:
-        if _gateway_profile():
-            return False
+        if Path.home().name == "agentbay-home":     # /srv/hermes-multi/<user>/agentbay-home
+            return True
+        if str(ROOT) == "/opt/agentbay":
+            return True
     except Exception:
         pass
+    return False
+
+
+def _acp_available():
+    """Use ACP for a locally-installed Hermes (standalone desktop). The multi-user
+    EC2 layout keeps the gateway. NOTE: HERMES_HOME alone does NOT mean EC2 —
+    standalone Windows/macOS installs set it too."""
+    if _is_multiuser_ec2():
+        return False
     return bool(which("hermes"))
 
 
@@ -2252,6 +2265,76 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900):
             proc.terminate()
         except Exception:
             pass
+
+
+def _acp_probe(hb, timeout=15):
+    """Spawn `hermes acp` and do a single initialize handshake. Returns (ok, detail)
+    so we can tell WHY the local agent isn't working on a given machine."""
+    try:
+        proc = subprocess.Popen([hb, "acp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True, bufsize=1)
+    except Exception as e:
+        return False, "could not spawn: %s" % e
+    out_q = queue.Queue()
+    threading.Thread(target=lambda: ([out_q.put(l) for l in proc.stdout], out_q.put(None)), daemon=True).start()
+    try:
+        proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                                     "params": {"protocolVersion": 1, "clientCapabilities": {},
+                                                "clientInfo": {"name": "agentbay", "version": "1"}}}) + "\n")
+        proc.stdin.flush()
+    except Exception as e:
+        proc.terminate()
+        return False, "write failed: %s" % e
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            line = out_q.get(timeout=1)
+        except Exception:
+            continue
+        if line is None:
+            break
+        try:
+            m = json.loads(line)
+        except Exception:
+            continue
+        if m.get("id") == 1 and "result" in m:
+            proc.terminate()
+            return True, "ok"
+        if m.get("id") == 1 and "error" in m:
+            proc.terminate()
+            return False, str(m.get("error"))[:200]
+    err = ""
+    try:
+        proc.terminate()
+        err = (proc.stderr.read() or "")[:300] if proc.stderr else ""
+    except Exception:
+        pass
+    return False, "no handshake in %ss%s" % (timeout, (" — " + err) if err else "")
+
+
+def agent_debug():
+    """Why is (or isn't) the local agent active? Surfaced in Settings → Agent and
+    /api/agent-debug so we can diagnose Windows without a VM."""
+    hb = which("hermes")
+    info = {
+        "os": platform.system(), "home": str(Path.home()),
+        "hermes_bin": hb or "(not found)",
+        "openclaw_bin": which("openclaw") or "(not found)",
+        "HERMES_HOME": os.environ.get("HERMES_HOME") or "(unset)",
+        "AGENTBAY_PROFILE": os.environ.get("AGENTBAY_PROFILE") or "(unset)",
+        "is_multiuser_ec2": _is_multiuser_ec2(),
+        "acp_available": _acp_available(),
+        "agent_mode": load_config().get("agent_mode"),
+    }
+    if hb and info["acp_available"]:
+        ok, detail = _acp_probe(hb)
+        info["acp_handshake_ok"] = ok
+        info["acp_detail"] = detail
+        info["agent_ready"] = ok
+    else:
+        info["agent_ready"] = False
+        info["acp_detail"] = "ACP disabled" + (" (multi-user EC2)" if info["is_multiuser_ec2"] else "" if hb else " (hermes not found)")
+    return info
 
 
 def _agent_chat(gw, provider, model, messages, session_id=None, timeout=600):
@@ -2686,6 +2769,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/agent-profiles":
             cfg = load_config()
             return self._send(200, {"profiles": list_hermes_profiles(), "active": cfg.get("agent_profile") or ""})
+        if path == "/api/agent-debug":
+            return self._send(200, agent_debug())
         if path == "/api/import/sessions":
             try:
                 return self._send(200, {"sessions": read_agent_sessions()})

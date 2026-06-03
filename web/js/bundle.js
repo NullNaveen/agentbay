@@ -2812,6 +2812,87 @@ That's a lot of water for a moon smaller than ours.`;
       }
     }, log));
   }
+
+  // ---- live "is the on-device agent actually working?" diagnostic ----
+  function AgentStatus() {
+    const [d, setD] = React.useState(null);
+    const [show, setShow] = React.useState(false);
+    const probe = () => {
+      setD("loading");
+      fetch("/api/agent-debug").then(r => r.json()).then(setD).catch(() => setD({
+        agent_ready: false,
+        acp_detail: "offline"
+      }));
+    };
+    React.useEffect(() => {
+      probe();
+    }, []);
+    if (d === "loading" || d === null) return /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 13,
+        color: "var(--text-3)"
+      }
+    }, "Checking the on-device agent\u2026");
+    const ready = d.agent_ready;
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        border: "1px solid " + (ready ? "var(--green)" : "var(--amber)"),
+        background: "color-mix(in srgb, " + (ready ? "var(--green)" : "var(--amber)") + " 8%, transparent)",
+        borderRadius: 11,
+        padding: "11px 13px"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 9,
+        fontSize: 14,
+        fontWeight: 600
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        width: 9,
+        height: 9,
+        borderRadius: 9,
+        background: ready ? "var(--green)" : "var(--amber)"
+      }
+    }), ready ? "On-device agent is ready — chat runs on this computer, with tools." : "On-device agent not active"), !ready && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12.5,
+        color: "var(--text-2)",
+        marginTop: 5
+      }
+    }, d.acp_detail || "—", d.hermes_bin && d.hermes_bin.startsWith("(") ? " · install Hermes below" : ""), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: 12,
+        marginTop: 8,
+        fontSize: 12
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost",
+      style: {
+        padding: "3px 8px"
+      },
+      onClick: probe
+    }, "Re-check"), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost",
+      style: {
+        padding: "3px 8px"
+      },
+      onClick: () => setShow(!show)
+    }, show ? "Hide details" : "Details")), show && /*#__PURE__*/React.createElement("pre", {
+      style: {
+        marginTop: 8,
+        fontSize: 11,
+        background: "var(--code-bg)",
+        padding: 10,
+        borderRadius: 8,
+        overflow: "auto",
+        maxHeight: 200
+      }
+    }, JSON.stringify(d, null, 2)));
+  }
   function AgentPanel({
     onToast
   }) {
@@ -2865,11 +2946,13 @@ That's a lot of water for a moon smaller than ours.`;
       style: {
         marginBottom: 6
       }
-    }, "Agent"), /*#__PURE__*/React.createElement("p", {
+    }, "Agent"), /*#__PURE__*/React.createElement(AgentStatus, {
+      onToast: onToast
+    }), /*#__PURE__*/React.createElement("p", {
       style: {
         fontSize: 13,
         color: "var(--text-3)",
-        marginTop: 0
+        marginTop: 14
       }
     }, "Install, detect, and keep your local agent runtime up to date. AgentBay fetches the latest from GitHub for your OS."), agents.map(a => {
       const u = upd[a.agent] || {};

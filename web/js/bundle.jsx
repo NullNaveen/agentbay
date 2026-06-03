@@ -1330,6 +1330,30 @@ That's a lot of water for a moon smaller than ours.`;
     );
   }
 
+  // ---- live "is the on-device agent actually working?" diagnostic ----
+  function AgentStatus() {
+    const [d, setD] = React.useState(null);
+    const [show, setShow] = React.useState(false);
+    const probe = () => { setD("loading"); fetch("/api/agent-debug").then((r) => r.json()).then(setD).catch(() => setD({ agent_ready: false, acp_detail: "offline" })); };
+    React.useEffect(() => { probe(); }, []);
+    if (d === "loading" || d === null) return <div style={{ fontSize: 13, color: "var(--text-3)" }}>Checking the on-device agent…</div>;
+    const ready = d.agent_ready;
+    return (
+      <div style={{ border: "1px solid " + (ready ? "var(--green)" : "var(--amber)"), background: "color-mix(in srgb, " + (ready ? "var(--green)" : "var(--amber)") + " 8%, transparent)", borderRadius: 11, padding: "11px 13px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 14, fontWeight: 600 }}>
+          <span style={{ width: 9, height: 9, borderRadius: 9, background: ready ? "var(--green)" : "var(--amber)" }} />
+          {ready ? "On-device agent is ready — chat runs on this computer, with tools." : "On-device agent not active"}
+        </div>
+        {!ready && <div style={{ fontSize: 12.5, color: "var(--text-2)", marginTop: 5 }}>{d.acp_detail || "—"}{d.hermes_bin && d.hermes_bin.startsWith("(") ? " · install Hermes below" : ""}</div>}
+        <div style={{ display: "flex", gap: 12, marginTop: 8, fontSize: 12 }}>
+          <button className="btn btn-ghost" style={{ padding: "3px 8px" }} onClick={probe}>Re-check</button>
+          <button className="btn btn-ghost" style={{ padding: "3px 8px" }} onClick={() => setShow(!show)}>{show ? "Hide details" : "Details"}</button>
+        </div>
+        {show && <pre style={{ marginTop: 8, fontSize: 11, background: "var(--code-bg)", padding: 10, borderRadius: 8, overflow: "auto", maxHeight: 200 }}>{JSON.stringify(d, null, 2)}</pre>}
+      </div>
+    );
+  }
+
   function AgentPanel({ onToast }) {
     const [agents, setAgents] = React.useState(null);
     const [upd, setUpd] = React.useState({});   // {agent:{update_available,current,latest}}
@@ -1353,7 +1377,8 @@ That's a lot of water for a moon smaller than ours.`;
     return (
       <div>
         <h3 style={{ marginBottom: 6 }}>Agent</h3>
-        <p style={{ fontSize: 13, color: "var(--text-3)", marginTop: 0 }}>Install, detect, and keep your local agent runtime up to date. AgentBay fetches the latest from GitHub for your OS.</p>
+        <AgentStatus onToast={onToast} />
+        <p style={{ fontSize: 13, color: "var(--text-3)", marginTop: 14 }}>Install, detect, and keep your local agent runtime up to date. AgentBay fetches the latest from GitHub for your OS.</p>
         {agents.map((a) => {
           const u = upd[a.agent] || {};
           return (
