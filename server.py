@@ -26,6 +26,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import queue
 import threading
 import time
 import uuid
@@ -334,8 +335,13 @@ def public_config(cfg):
 
 
 def enabled_models(cfg):
-    """Flatten the user-enabled models across all providers — drives the top dropdown."""
+    """Flatten the user-enabled models across all providers — drives the top dropdown.
+    When a local Hermes agent is present, always offer it first so the user can chat
+    immediately (it's the real on-device agent), even before adding any provider."""
     out = []
+    if _acp_available():
+        out.append({"id": "local::hermes-agent", "provider": "local", "model": "hermes-agent",
+                    "label": "Hermes Agent", "provider_label": "On this device"})
     for pid, spec in PROVIDERS.items():
         p = cfg.get("providers", {}).get(pid, {})
         if spec["needs_key"] and not p.get("key"):
@@ -2072,6 +2078,178 @@ def ensure_local_gateway():
         pass
 
 
+# ==================== local agent via ACP (the robust, cross-platform path) ====
+# A locally-installed Hermes speaks ACP (Agent Client Protocol) over stdio: spawn
+# `hermes acp`, JSON-RPC, stream reply + reasoning + tool calls. No gateway, no
+# port, no service — works the same on Windows/macOS/Linux. This is how AgentBay
+# runs the real on-device agent (vs the fragile gateway-API approach).
+_ACP_SESS_FILE = CONFIG_DIR / "acp_sessions.json"
+_acp_lock = threading.Lock()
+
+
+def _acp_load_map():
+    try:
+        return json.loads(_ACP_SESS_FILE.read_text())
+    except Exception:
+        return {}
+
+
+def _acp_save_map(m):
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        _ACP_SESS_FILE.write_text(json.dumps(m))
+    except Exception:
+        pass
+
+
+def _acp_available():
+    """Use ACP for a locally-installed Hermes (standalone). EC2 keeps the gateway."""
+    if os.environ.get("AGENTBAY_PROFILE"):
+        return False
+    return bool(which("hermes"))
+
+
+def _latest_user(messages):
+    for m in reversed(messages or []):
+        if m.get("role") == "user" and m.get("content"):
+            return m["content"]
+    return ""
+
+
+def _acp_tool_text(u):
+    """Human-friendly tool summary from an ACP tool_call update."""
+    parts = []
+    for c in (u.get("content") or []):
+        if isinstance(c, dict):
+            if c.get("type") == "content" and isinstance(c.get("content"), dict):
+                t = c["content"].get("text")
+                if t:
+                    parts.append(t)
+            elif c.get("text"):
+                parts.append(c["text"])
+    return (" ".join(parts))[:600]
+
+
+def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900):
+    """Run ONE agent turn via `hermes acp` over stdio. Yields (type, data):
+    token / reasoning / tool / error / done. Sessions persist (agentbay id ↔ ACP id)."""
+    hb = which("hermes")
+    cwd = cwd or str(Path.home())
+    user_text = _latest_user(messages)
+    if not hb or not user_text:
+        yield ("error", "no local agent or empty message")
+        yield ("done", {})
+        return
+    try:
+        proc = subprocess.Popen([hb, "acp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, text=True, bufsize=1)
+    except Exception as e:
+        yield ("error", "could not start agent: %s" % e)
+        yield ("done", {})
+        return
+    q = queue.Queue()
+
+    def _reader():
+        try:
+            for line in proc.stdout:
+                q.put(line)
+        except Exception:
+            pass
+        q.put(None)
+    threading.Thread(target=_reader, daemon=True).start()
+
+    nid = [0]
+
+    def send(method, params):
+        nid[0] += 1
+        proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": nid[0], "method": method, "params": params}) + "\n")
+        proc.stdin.flush()
+        return nid[0]
+
+    def reply(i, res):
+        proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": i, "result": res}) + "\n")
+        proc.stdin.flush()
+
+    amap = _acp_load_map()
+    acp_sid = amap.get(session_id) if session_id else None
+    st = {}
+    st["init"] = send("initialize", {"protocolVersion": 1, "clientCapabilities": {},
+                                      "clientInfo": {"name": "agentbay", "version": "1"}})
+    deadline = time.time() + timeout
+    try:
+        while time.time() < deadline:
+            try:
+                line = q.get(timeout=1)
+            except Exception:
+                continue
+            if line is None:
+                break
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                m = json.loads(line)
+            except Exception:
+                continue
+            mid, meth = m.get("id"), m.get("method")
+            # server → client requests
+            if meth == "session/request_permission":
+                reply(mid, {"outcome": {"outcome": "selected", "optionId": "allow_always"}})
+                continue
+            if meth in ("fs/read_text_file", "fs/write_text_file") or (meth or "").startswith("terminal/"):
+                reply(mid, {})            # we advertised no caps; just ack anything stray
+                continue
+            if meth == "session/update":
+                u = m.get("params", {}).get("update", {}) or {}
+                t = u.get("sessionUpdate")
+                if t == "agent_message_chunk":
+                    tx = (u.get("content") or {}).get("text", "")
+                    if tx:
+                        yield ("token", tx)
+                elif t == "agent_thought_chunk":
+                    tx = (u.get("content") or {}).get("text", "")
+                    if tx:
+                        yield ("reasoning", tx)
+                elif t == "tool_call":
+                    yield ("tool", {"name": u.get("title") or u.get("kind") or "tool", "args": _acp_tool_text(u)})
+                continue
+            if "result" in m or "error" in m:
+                if mid == st.get("init"):
+                    if acp_sid:
+                        st["load"] = send("session/load", {"cwd": cwd, "sessionId": acp_sid, "mcpServers": []})
+                    else:
+                        st["new"] = send("session/new", {"cwd": cwd, "mcpServers": []})
+                elif mid == st.get("load"):
+                    if "error" in m:
+                        st["new"] = send("session/new", {"cwd": cwd, "mcpServers": []})
+                    else:
+                        st["prompt"] = send("session/prompt", {"sessionId": acp_sid, "prompt": [{"type": "text", "text": user_text}]})
+                elif mid == st.get("new"):
+                    acp_sid = (m.get("result") or {}).get("sessionId")
+                    if acp_sid:
+                        if session_id:
+                            with _acp_lock:
+                                a = _acp_load_map(); a[session_id] = acp_sid; _acp_save_map(a)
+                        st["prompt"] = send("session/prompt", {"sessionId": acp_sid, "prompt": [{"type": "text", "text": user_text}]})
+                    else:
+                        yield ("error", "agent session could not start")
+                        break
+                elif mid == st.get("prompt"):
+                    if "error" in m:
+                        yield ("error", str(m.get("error"))[:300])
+                    break
+        yield ("done", {})
+    finally:
+        try:
+            proc.stdin.close()
+        except Exception:
+            pass
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+
+
 def _agent_chat(gw, provider, model, messages, session_id=None, timeout=600):
     """Run a chat turn through the agent gateway: POST /chat/completions with
     {model, provider} + a session header — the agent picks that provider+model as
@@ -2667,6 +2845,21 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/chat":
             cfg = load_config()
             msgs = data.get("messages") or []
+            if _acp_available() and cfg.get("agent_mode") is not False:
+                reply, reasoning, tools = "", "", []
+                t0 = time.time()
+                for ev, payload in acp_stream_turn(msgs, data.get("session_id")):
+                    if ev == "token":
+                        reply += payload
+                    elif ev == "reasoning":
+                        reasoning += payload
+                    elif ev == "tool":
+                        tools.append(payload)
+                    elif ev == "error":
+                        reply = reply or ("⚠ " + str(payload))
+                return self._send(200, {"reply": reply, "agent": True, "model": "hermes-agent",
+                                        "reasoning": reasoning, "tools": tools,
+                                        "latency_ms": int((time.time() - t0) * 1000)})
             res = chat_complete(cfg, msgs, provider=data.get("provider"), model=data.get("model"), session_id=data.get("session_id"))
             threading.Thread(target=langfuse_log,
                              args=(msgs, res, res.get("provider"), res.get("model"), res.get("latency_ms")),
@@ -2690,7 +2883,11 @@ class Handler(BaseHTTPRequestHandler):
 
             try:
                 use_gw = gw and not (pid == "local" and p["base_url"].rstrip("/") == gw["base_url"] and not gw.get("key"))
-                if use_gw:
+                if _acp_available() and cfg.get("agent_mode") is not False:
+                    # the real on-device agent over ACP (tools, terminal) — no gateway needed
+                    for ev, payload in acp_stream_turn(msgs, data.get("session_id")):
+                        emit(ev, payload)
+                elif use_gw:
                     for ev, payload in _agent_chat_stream(gw, pid, mdl, msgs, data.get("session_id")):
                         emit(ev, payload)
                 else:
@@ -2893,9 +3090,8 @@ def main():
     # Non-git installs (zip/tarball) carry no HEAD to compare against — record the
     # current upstream commit once so the in-app "update available" check works.
     threading.Thread(target=baseline_build_marker, daemon=True).start()
-    # If a local Hermes is installed, make sure its agent API is up so chat runs
-    # through the agent (tools) instead of as a plain chatbot.
-    threading.Thread(target=ensure_local_gateway, daemon=True).start()
+    # A local Hermes is driven directly over ACP (stdio) per turn — no background
+    # gateway needed. (ensure_local_gateway is kept only for non-ACP fallbacks.)
     # First run on a real desktop: drop a clickable launcher (Desktop / Start Menu /
     # Applications) so the user never needs a terminal again. Skip on the headless
     # EC2 multi-user services (AGENTBAY_PROFILE) and Linux boxes with no desktop.
