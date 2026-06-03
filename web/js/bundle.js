@@ -1579,6 +1579,8 @@ That's a lot of water for a moon smaller than ours.`;
     onFollowup,
     onToast,
     showTimestamps,
+    showThinking,
+    showTools,
     onRegen
   }) {
     const meta = modelMeta(msg.model);
@@ -1632,7 +1634,24 @@ That's a lot of water for a moon smaller than ours.`;
       className: "ts"
     }, msg.ts)), msg.thought ? /*#__PURE__*/React.createElement(Activity, {
       seconds: msg.thought
-    }) : null, streaming && !msg.content ? null : /*#__PURE__*/React.createElement("div", {
+    }) : null, !streaming && showThinking && msg.reasoning ? /*#__PURE__*/React.createElement("details", {
+      className: "agent-trace"
+    }, /*#__PURE__*/React.createElement("summary", null, /*#__PURE__*/React.createElement(I.Sparkle, {
+      size: 13
+    }), " Thinking"), /*#__PURE__*/React.createElement("div", {
+      className: "agent-trace-body"
+    }, msg.reasoning)) : null, !streaming && showTools && msg.tools && msg.tools.length ? /*#__PURE__*/React.createElement("details", {
+      className: "agent-trace"
+    }, /*#__PURE__*/React.createElement("summary", null, /*#__PURE__*/React.createElement(I.Wand, {
+      size: 13
+    }), " Tools used (", msg.tools.length, ")"), /*#__PURE__*/React.createElement("div", {
+      className: "agent-trace-body"
+    }, msg.tools.map((t, i) => /*#__PURE__*/React.createElement("div", {
+      key: i,
+      className: "tool-call"
+    }, /*#__PURE__*/React.createElement("code", null, t.name), t.args ? /*#__PURE__*/React.createElement("span", {
+      className: "tool-args"
+    }, t.args) : null)))) : null, streaming && !msg.content ? null : /*#__PURE__*/React.createElement("div", {
       className: "md",
       ref: mdRef,
       dangerouslySetInnerHTML: {
@@ -1765,6 +1784,8 @@ That's a lot of water for a moon smaller than ours.`;
         onFollowup: onFollowup,
         onToast: onToast,
         showTimestamps: settings.timestamps,
+        showThinking: settings.showThinking,
+        showTools: settings.showTools,
         onRegen: onRegen
       });
     })), showJump && /*#__PURE__*/React.createElement("button", {
@@ -3875,6 +3896,27 @@ That's a lot of water for a moon smaller than ours.`;
       onChange: v => set("agentsEnabled", v),
       label: "Agents"
     })), /*#__PURE__*/React.createElement("div", {
+      className: "set-section",
+      style: {
+        marginTop: 24
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "sec-title"
+    }, "Agent transparency"), /*#__PURE__*/React.createElement(Row, {
+      t: "Show the agent's thinking",
+      d: "When the model reasons before answering, show that reasoning above the reply."
+    }, /*#__PURE__*/React.createElement(Switch, {
+      on: s.showThinking,
+      onChange: v => set("showThinking", v),
+      label: "Show thinking"
+    })), /*#__PURE__*/React.createElement(Row, {
+      t: "Show tool calls",
+      d: "List the tools the agent used (terminal, web, files\u2026) for each reply."
+    }, /*#__PURE__*/React.createElement(Switch, {
+      on: s.showTools,
+      onChange: v => set("showTools", v),
+      label: "Show tools"
+    }))), /*#__PURE__*/React.createElement("div", {
       className: "set-section",
       style: {
         marginTop: 24
@@ -6952,7 +6994,9 @@ Object.assign(window, {
     accent: "#d9a36b",
     systemPrompt: "",
     stt: "Whisper (local)",
-    tts: "Browser (system)"
+    tts: "Browser (system)",
+    showThinking: false,
+    showTools: false
   };
   function buildUser(name) {
     const nm = (name || "").trim();
@@ -7255,6 +7299,7 @@ Object.assign(window, {
     // streaming
     const [streaming, setStreaming] = useState(null); // { sessionId, text, full, timer }
     const streamRef = useRef(null);
+    const metaRef = useRef({}); // {sessionId: {reasoning, tools}} captured from the reply
     const sessionsRef = useRef(sessions);
     useEffect(() => {
       sessionsRef.current = sessions;
@@ -7454,12 +7499,18 @@ Object.assign(window, {
           finalize(sessionId, "", followups, t0);
           return;
         }
+        metaRef.current[sessionId] = {
+          reasoning: d.reasoning || "",
+          tools: d.tools || []
+        };
         const full = d.reply || "⚠ " + (d.error || "no response from model");
         runTypewriter(sessionId, full, followups, t0);
       }).catch(e => runTypewriter(sessionId, "⚠ " + e, followups, t0));
     };
     const finalize = (sessionId, full, followups, t0) => {
       const secs = Math.max(1, Math.round((Date.now() - t0) / 1000));
+      const meta = metaRef.current[sessionId] || {};
+      delete metaRef.current[sessionId];
       setSessions(ss => ss.map(s => {
         if (s.id !== sessionId) return s;
         const msgs = s.messages.slice();
@@ -7468,7 +7519,9 @@ Object.assign(window, {
           ...last,
           content: full,
           thought: Math.min(secs, 9),
-          followups
+          followups,
+          reasoning: meta.reasoning || "",
+          tools: meta.tools || []
         };
         return {
           ...s,

@@ -800,7 +800,7 @@ That's a lot of water for a moon smaller than ours.`;
   }
 
   /* ---------- A single assistant turn ---------- */
-  function AssistantTurn({ msg, streaming, isLast, onFollowup, onToast, showTimestamps, onRegen }) {
+  function AssistantTurn({ msg, streaming, isLast, onFollowup, onToast, showTimestamps, showThinking, showTools, onRegen }) {
     const meta = modelMeta(msg.model);
     const Ic = I[meta.icon] || I.Bot;
     const [vote, setVote] = useState(0);
@@ -834,6 +834,23 @@ That's a lot of water for a moon smaller than ours.`;
         </div>
 
         {msg.thought ? <Activity seconds={msg.thought} /> : null}
+
+        {!streaming && showThinking && msg.reasoning ? (
+          <details className="agent-trace">
+            <summary><I.Sparkle size={13} /> Thinking</summary>
+            <div className="agent-trace-body">{msg.reasoning}</div>
+          </details>
+        ) : null}
+        {!streaming && showTools && msg.tools && msg.tools.length ? (
+          <details className="agent-trace">
+            <summary><I.Wand size={13} /> Tools used ({msg.tools.length})</summary>
+            <div className="agent-trace-body">
+              {msg.tools.map((t, i) => (
+                <div key={i} className="tool-call"><code>{t.name}</code>{t.args ? <span className="tool-args">{t.args}</span> : null}</div>
+              ))}
+            </div>
+          </details>
+        ) : null}
 
         {streaming && !msg.content ? null : (
           <div className="md" ref={mdRef} dangerouslySetInnerHTML={{ __html: D.renderMarkdown(msg.content) }} />
@@ -913,7 +930,8 @@ That's a lot of water for a moon smaller than ours.`;
             const isStreamingThis = streaming && isLast;
             const liveMsg = isStreamingThis ? { ...m, content: streaming.text } : m;
             return <AssistantTurn key={i} msg={liveMsg} streaming={isStreamingThis} isLast={isLast}
-              onFollowup={onFollowup} onToast={onToast} showTimestamps={settings.timestamps} onRegen={onRegen} />;
+              onFollowup={onFollowup} onToast={onToast} showTimestamps={settings.timestamps}
+              showThinking={settings.showThinking} showTools={settings.showTools} onRegen={onRegen} />;
           })}
         </div>
         {showJump && (
@@ -1732,6 +1750,15 @@ That's a lot of water for a moon smaller than ours.`;
                 <Row t="Agents (experimental)" d="Named personas you can pick per chat. Work in progress — off by default.">
                   <Switch on={s.agentsEnabled} onChange={(v) => set("agentsEnabled", v)} label="Agents" />
                 </Row>
+                <div className="set-section" style={{ marginTop: 24 }}>
+                  <div className="sec-title">Agent transparency</div>
+                  <Row t="Show the agent's thinking" d="When the model reasons before answering, show that reasoning above the reply.">
+                    <Switch on={s.showThinking} onChange={(v) => set("showThinking", v)} label="Show thinking" />
+                  </Row>
+                  <Row t="Show tool calls" d="List the tools the agent used (terminal, web, files…) for each reply.">
+                    <Switch on={s.showTools} onChange={(v) => set("showTools", v)} label="Show tools" />
+                  </Row>
+                </div>
                 <div className="set-section" style={{ marginTop: 24 }}>
                   <div className="sec-title">Default model</div>
                   <div className="set-row" style={{ borderTop: "none" }}>
@@ -3205,6 +3232,7 @@ Object.assign(window, {
     reduceMotion: false, lang: "en", fontSize: "md", avatars: true, latex: true, codeBlocks: true,
     collapseDefault: false, bubbles: true, timestamps: false, autoScroll: true, followups: false,
     agentsEnabled: false, accent: "#d9a36b", systemPrompt: "", stt: "Whisper (local)", tts: "Browser (system)",
+    showThinking: false, showTools: false,
   };
   function buildUser(name) {
     const nm = (name || "").trim();
@@ -3381,6 +3409,7 @@ Object.assign(window, {
     // streaming
     const [streaming, setStreaming] = useState(null); // { sessionId, text, full, timer }
     const streamRef = useRef(null);
+    const metaRef = useRef({});   // {sessionId: {reasoning, tools}} captured from the reply
     const sessionsRef = useRef(sessions);
     useEffect(() => { sessionsRef.current = sessions; }, [sessions]);
 
@@ -3524,6 +3553,7 @@ Object.assign(window, {
         .then((r) => r.json())
         .then((d) => {
           if (streamRef.current === "cancel") { finalize(sessionId, "", followups, t0); return; }
+          metaRef.current[sessionId] = { reasoning: d.reasoning || "", tools: d.tools || [] };
           const full = d.reply || ("⚠ " + (d.error || "no response from model"));
           runTypewriter(sessionId, full, followups, t0);
         })
@@ -3532,11 +3562,12 @@ Object.assign(window, {
 
     const finalize = (sessionId, full, followups, t0) => {
       const secs = Math.max(1, Math.round((Date.now() - t0) / 1000));
+      const meta = metaRef.current[sessionId] || {}; delete metaRef.current[sessionId];
       setSessions((ss) => ss.map((s) => {
         if (s.id !== sessionId) return s;
         const msgs = s.messages.slice();
         const last = msgs[msgs.length - 1];
-        if (last && last.role === "assistant") msgs[msgs.length - 1] = { ...last, content: full, thought: Math.min(secs, 9), followups };
+        if (last && last.role === "assistant") msgs[msgs.length - 1] = { ...last, content: full, thought: Math.min(secs, 9), followups, reasoning: meta.reasoning || "", tools: meta.tools || [] };
         return { ...s, messages: msgs, updated: Date.now() };
       }));
       setStreaming(null);

@@ -2029,8 +2029,18 @@ def _agent_chat(gw, provider, model, messages, session_id=None, timeout=600):
                                  data=json.dumps(body).encode(), headers=headers)
     with _urlopen(req, timeout) as r:
         d = json.loads(r.read())
-    reply = d.get("choices", [{}])[0].get("message", {}).get("content", "")
-    return reply, d.get("usage", {})
+    msg = d.get("choices", [{}])[0].get("message", {}) or {}
+    reply = msg.get("content", "") or ""
+    # Surface the agent's thinking + which tools it called, when the gateway returns
+    # them (reasoning models fill reasoning_content; the agent fills tool_calls).
+    reasoning = msg.get("reasoning_content") or msg.get("reasoning") or ""
+    tools = []
+    for tc in (msg.get("tool_calls") or []):
+        fn = tc.get("function") or {}
+        if fn.get("name"):
+            tools.append({"name": fn.get("name", ""), "args": (fn.get("arguments") or "")[:600]})
+    extra = {"reasoning": reasoning, "tools": tools}
+    return reply, d.get("usage", {}), extra
 
 
 def chat_complete(cfg, messages, provider=None, model=None, session_id=None):
@@ -2042,9 +2052,10 @@ def chat_complete(cfg, messages, provider=None, model=None, session_id=None):
     if gw and not (pid == "local" and base.rstrip("/") == gw["base_url"] and not gw.get("key")):
         t0 = time.time()
         try:
-            reply, usage = _agent_chat(gw, pid, mdl, messages, session_id)
+            reply, usage, extra = _agent_chat(gw, pid, mdl, messages, session_id)
             return {"reply": reply, "model": mdl, "provider": pid, "agent": True,
-                    "usage": usage, "latency_ms": int((time.time() - t0) * 1000)}
+                    "usage": usage, "latency_ms": int((time.time() - t0) * 1000),
+                    "reasoning": extra.get("reasoning", ""), "tools": extra.get("tools", [])}
         except urllib.error.HTTPError as e:
             return {"error": f"Agent HTTP {e.code}: {e.read().decode('utf-8', 'ignore')[:300]}"}
         except Exception as e:

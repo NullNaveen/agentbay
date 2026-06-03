@@ -362,6 +362,14 @@ body.no-anim *::after {
 .md th { background: var(--field-bg-2); font-weight: 650; }
 .md tbody tr:nth-child(even) { background: color-mix(in srgb, var(--text-1) 3%, transparent); }
 .md hr { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
+.agent-trace { margin: 4px 0 10px; border: 1px solid var(--border); border-radius: 9px; background: color-mix(in srgb, var(--accent) 5%, transparent); overflow: hidden; }
+.agent-trace > summary { cursor: pointer; list-style: none; padding: 7px 12px; font-size: 12.5px; font-weight: 600; color: var(--text-2); display: flex; align-items: center; gap: 7px; user-select: none; }
+.agent-trace > summary::-webkit-details-marker { display: none; }
+.agent-trace[open] > summary { border-bottom: 1px solid var(--border); }
+.agent-trace-body { padding: 10px 13px; font-size: 12.5px; line-height: 1.6; color: var(--text-2); white-space: pre-wrap; max-height: 320px; overflow: auto; }
+.tool-call { padding: 3px 0; }
+.tool-call code { background: var(--code-bg); padding: 1px 6px; border-radius: 5px; font-size: 12px; }
+.tool-args { color: var(--text-3); margin-left: 8px; font-family: ui-monospace, monospace; font-size: 11.5px; }
 .md-img { max-width: 100%; height: auto; border-radius: 9px; border: 1px solid var(--border); margin: 6px 0; display: block; }
 .md-mermaid { margin: 10px 0; padding: 12px; background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; overflow-x: auto; text-align: center; }
 .md-mermaid svg { max-width: 100%; height: auto; }
