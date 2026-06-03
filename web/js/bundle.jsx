@@ -1118,6 +1118,7 @@ That's a lot of water for a moon smaller than ours.`;
     const [avail, setAvail] = React.useState({});      // {pid:[modelId]} fetched live
     const [enabled, setEnabled] = React.useState({});  // {pid:[modelId]} chosen
     const [status, setStatus] = React.useState({});    // {pid:{ok,msg,busy}}
+    const [open, setOpen] = React.useState(null);      // which provider's config is open
     const load = () => fetch("/api/config").then((r) => r.json()).then((c) => {
       setProvs(c.providers); setActive(c.provider);
       const d = {}, en = {};
@@ -1149,57 +1150,91 @@ That's a lot of water for a moon smaller than ours.`;
     const setActiveProv = (pid) => { setActive(pid); fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ provider: pid, active_model: (enabled[pid] || [])[0] || "" }) })
       .then(() => onToast && onToast({ type: "success", title: "Active: " + provs[pid].label })); };
+    const PIC = { deepseek: "Wand", anthropic: "Brain", openai: "Sparkle", gemini: "Globe", groq: "Zap", openrouter: "Layers", mistral: "Bot", nous: "Gift", local: "Server" };
+    const cur = open && provs[open];
+
+    // ---- grid of provider cards ----
+    if (!cur) {
+      return (
+        <div>
+          <h3 style={{ marginBottom: 6 }}>Providers</h3>
+          <p style={{ fontSize: 13, color: "var(--text-3)", marginTop: 0 }}>
+            Connect an AI provider to add models to your chat. Click one to paste its key and pick models.
+            Keys stay on this device (chmod&nbsp;600). Look for the
+            <span style={{ fontSize: 10, fontWeight: 700, color: "var(--green)", border: "1px solid var(--green)", borderRadius: 6, padding: "1px 5px", margin: "0 4px" }}>FREE</span>
+            tag for no-cost tiers.
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12, marginTop: 14 }}>
+            {PROV_ORDER.map((pid) => {
+              const p = provs[pid], en = enabled[pid] || [], Ic = I[PIC[pid]] || I.Bot;
+              const connected = p.key_set || (!p.needs_key && en.length) || pid === "local";
+              return (
+                <button key={pid} onClick={() => { setOpen(pid); setStatus((s) => ({ ...s, [pid]: {} })); }}
+                  style={{ textAlign: "left", border: "1px solid var(--border)", borderRadius: 13, padding: 14, background: "var(--surface)", cursor: "pointer", display: "flex", flexDirection: "column", gap: 8, outline: active === pid ? "1.5px solid var(--accent)" : "none", transition: "border-color .15s" }}
+                  onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--accent)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--border)")}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span style={{ display: "inline-flex", width: 38, height: 38, borderRadius: 10, alignItems: "center", justifyContent: "center", background: "color-mix(in srgb, var(--accent) 12%, transparent)", color: "var(--accent-deep)" }}><Ic size={21} /></span>
+                    {active === pid ? <span style={{ fontSize: 11, fontWeight: 650, color: "var(--accent-deep)" }}>● active</span>
+                      : connected ? <span style={{ fontSize: 11, fontWeight: 600, color: "var(--green)" }}>connected</span>
+                        : <span style={{ fontSize: 11, color: "var(--text-3)" }}>not set</span>}
+                  </div>
+                  <div style={{ fontWeight: 650, fontSize: 14.5, display: "flex", alignItems: "center", gap: 6 }}>
+                    {p.label}
+                    {p.free && <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--green)", border: "1px solid var(--green)", borderRadius: 5, padding: "0 4px" }}>FREE</span>}
+                  </div>
+                  <div style={{ fontSize: 12, color: "var(--text-3)" }}>{en.length ? en.length + " model" + (en.length === 1 ? "" : "s") + " enabled" : "tap to set up"}</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
+    // ---- focused provider config ----
+    const pid = open, p = cur, st = status[pid] || {}, av = avail[pid], en = enabled[pid] || [], Ic = I[PIC[pid]] || I.Bot;
     return (
       <div>
-        <h3 style={{ marginBottom: 6 }}>Providers</h3>
-        <p style={{ fontSize: 13, color: "var(--text-3)", marginTop: 0 }}>Pick a provider, paste its key, fetch the live model list, and tick the models you want. Only ticked models appear in the chat model menu. Keys are stored locally (chmod&nbsp;600). Want models for free? Look for the <span style={{ fontSize: 10.5, fontWeight: 700, color: "var(--green)", border: "1px solid var(--green)", borderRadius: 6, padding: "1px 5px" }}>FREE</span> tag — Nous Portal, Google AI Studio, Groq and OpenRouter all have free tiers.</p>
-        {PROV_ORDER.map((pid) => {
-          const p = provs[pid], st = status[pid] || {}, av = avail[pid], en = enabled[pid] || [];
-          return (
-            <div key={pid} style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 14, marginTop: 12, outline: active === pid ? "2px solid var(--accent)" : "none" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 650, cursor: "pointer", flex: 1 }}>
-                  <input type="radio" name="activeprov" checked={active === pid} onChange={() => setActiveProv(pid)} />
-                  {p.label}
-                  {p.free && <span style={{ fontSize: 10.5, fontWeight: 700, color: "var(--green)", border: "1px solid var(--green)", borderRadius: 6, padding: "1px 5px" }}>FREE</span>}
-                  {p.key_set && <span style={{ fontSize: 11, color: "var(--green)" }}>● key set</span>}
-                  {en.length > 0 && <span style={{ fontSize: 11, color: "var(--text-3)" }}>{en.length} enabled</span>}
-                  {active === pid && <span style={{ fontSize: 11, color: "var(--accent-deep)" }}>active</span>}
-                </label>
-              </div>
-              {p.free && p.free_note && <p style={{ fontSize: 12, color: "var(--text-3)", margin: "0 0 8px" }}>✨ {p.free_note}</p>}
-              {p.needs_key && (
-                <div style={{ marginBottom: 8 }}>
-                  <label className="field-label">API key{p.signup_url && <> · <a href={p.signup_url} target="_blank" rel="noreferrer" style={{ color: "var(--accent-deep)" }}>get a key →</a></>}</label>
-                  <input className="field" type="password" placeholder={p.key_set ? "•••••• saved — paste to replace" : "paste API key"} value={draft[pid].key} onChange={(e) => upd(pid, "key", e.target.value)} />
-                </div>
-              )}
-              {pid === "local" && <div style={{ marginBottom: 8 }}><label className="field-label">Base URL</label>
-                <input className="field" value={draft[pid].base_url} onChange={(e) => upd(pid, "base_url", e.target.value)} />
-                <p style={{ fontSize: 12, color: "var(--text-3)", margin: "6px 0 0" }}>Point this at the server that hosts your models, then Fetch:
-                  Ollama <code>http://localhost:11434/v1</code>, LM Studio / MLX <code>http://localhost:1234/v1</code>.
-                  Note: an agent gateway exposes only its own agent — for the raw local models use the model server's port.</p></div>}
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <button className="btn btn-outline" disabled={st.busy} onClick={() => fetchModels(pid)}>{st.busy ? "Fetching…" : "Fetch models"}</button>
-                {st.msg && <span style={{ fontSize: 12, color: st.ok ? "var(--green)" : (st.ok === false ? "var(--red)" : "var(--text-3)") }}>{st.msg}</span>}
-              </div>
-              {av && av.length > 0 && (
-                <div style={{ marginTop: 10, maxHeight: 160, overflow: "auto", border: "1px solid var(--border)", borderRadius: 9, padding: 8 }}>
-                  {av.map((m) => (
-                    <label key={m} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 6px", cursor: "pointer", fontSize: 13.5 }}>
-                      <input type="checkbox" checked={en.includes(m)} onChange={() => toggleModel(pid, m)} /> {m}
-                    </label>
-                  ))}
-                </div>
-              )}
-              {(av || en.length > 0) && (
-                <div style={{ marginTop: 10 }}>
-                  <button className="btn btn-primary" onClick={() => save(pid)}>Save {en.length} model{en.length === 1 ? "" : "s"}</button>
-                </div>
-              )}
+        <button className="btn btn-ghost" style={{ padding: "4px 8px", marginBottom: 12 }} onClick={() => setOpen(null)}><I.ChevronRight size={15} style={{ transform: "rotate(180deg)" }} /> All providers</button>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
+          <span style={{ display: "inline-flex", width: 44, height: 44, borderRadius: 11, alignItems: "center", justifyContent: "center", background: "color-mix(in srgb, var(--accent) 12%, transparent)", color: "var(--accent-deep)" }}><Ic size={25} /></span>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 17, display: "flex", alignItems: "center", gap: 8 }}>{p.label}
+              {p.free && <span style={{ fontSize: 10, fontWeight: 700, color: "var(--green)", border: "1px solid var(--green)", borderRadius: 5, padding: "1px 5px" }}>FREE</span>}
+              {active === pid && <span style={{ fontSize: 11, color: "var(--accent-deep)" }}>● active</span>}
             </div>
-          );
-        })}
+            {p.free && p.free_note && <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>{p.free_note}</div>}
+          </div>
+        </div>
+        {p.needs_key && (
+          <div style={{ marginTop: 14 }}>
+            <label className="field-label">API key{p.signup_url && <> · <a href={p.signup_url} target="_blank" rel="noreferrer" style={{ color: "var(--accent-deep)" }}>get a key →</a></>}</label>
+            <input className="field" type="password" placeholder={p.key_set ? "•••••• saved — paste to replace" : "paste API key"} value={draft[pid].key} onChange={(e) => upd(pid, "key", e.target.value)} />
+          </div>
+        )}
+        {pid === "local" && <div style={{ marginTop: 14 }}><label className="field-label">Server URL</label>
+          <input className="field" value={draft[pid].base_url} onChange={(e) => upd(pid, "base_url", e.target.value)} placeholder="http://localhost:11434" />
+          <p style={{ fontSize: 12, color: "var(--text-3)", margin: "6px 0 0" }}>Where your models run — Ollama <code>http://localhost:11434</code>, LM Studio / MLX <code>http://localhost:1234</code>. The <code>/v1</code> is added automatically.</p></div>}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12 }}>
+          <button className="btn btn-outline" disabled={st.busy} onClick={() => fetchModels(pid)}>{st.busy ? "Fetching…" : "Fetch models"}</button>
+          {st.msg && <span style={{ fontSize: 12, color: st.ok ? "var(--green)" : (st.ok === false ? "var(--red)" : "var(--text-3)") }}>{st.msg}</span>}
+        </div>
+        {av && av.length > 0 && (
+          <div style={{ marginTop: 12, maxHeight: 220, overflow: "auto", border: "1px solid var(--border)", borderRadius: 10, padding: 8 }}>
+            {av.map((m) => (
+              <label key={m} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 6px", cursor: "pointer", fontSize: 13.5, borderRadius: 7 }}>
+                <input type="checkbox" checked={en.includes(m)} onChange={() => toggleModel(pid, m)} /> {m}
+              </label>
+            ))}
+          </div>
+        )}
+        {(av || en.length > 0) && (
+          <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+            <button className="btn btn-primary" onClick={() => save(pid)}>Save {en.length} model{en.length === 1 ? "" : "s"}</button>
+            {en.length > 0 && active !== pid && <button className="btn btn-outline" onClick={() => setActiveProv(pid)}>Set as active</button>}
+          </div>
+        )}
       </div>
     );
   }

@@ -2188,6 +2188,7 @@ That's a lot of water for a moon smaller than ours.`;
     const [avail, setAvail] = React.useState({}); // {pid:[modelId]} fetched live
     const [enabled, setEnabled] = React.useState({}); // {pid:[modelId]} chosen
     const [status, setStatus] = React.useState({}); // {pid:{ok,msg,busy}}
+    const [open, setOpen] = React.useState(null); // which provider's config is open
     const load = () => fetch("/api/config").then(r => r.json()).then(c => {
       setProvs(c.providers);
       setActive(c.provider);
@@ -2307,172 +2308,294 @@ That's a lot of water for a moon smaller than ours.`;
         title: "Active: " + provs[pid].label
       }));
     };
-    return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h3", {
-      style: {
-        marginBottom: 6
-      }
-    }, "Providers"), /*#__PURE__*/React.createElement("p", {
-      style: {
-        fontSize: 13,
-        color: "var(--text-3)",
-        marginTop: 0
-      }
-    }, "Pick a provider, paste its key, fetch the live model list, and tick the models you want. Only ticked models appear in the chat model menu. Keys are stored locally (chmod\xA0600). Want models for free? Look for the ", /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 10.5,
-        fontWeight: 700,
-        color: "var(--green)",
-        border: "1px solid var(--green)",
-        borderRadius: 6,
-        padding: "1px 5px"
-      }
-    }, "FREE"), " tag \u2014 Nous Portal, Google AI Studio, Groq and OpenRouter all have free tiers."), PROV_ORDER.map(pid => {
-      const p = provs[pid],
-        st = status[pid] || {},
-        av = avail[pid],
-        en = enabled[pid] || [];
-      return /*#__PURE__*/React.createElement("div", {
-        key: pid,
+    const PIC = {
+      deepseek: "Wand",
+      anthropic: "Brain",
+      openai: "Sparkle",
+      gemini: "Globe",
+      groq: "Zap",
+      openrouter: "Layers",
+      mistral: "Bot",
+      nous: "Gift",
+      local: "Server"
+    };
+    const cur = open && provs[open];
+
+    // ---- grid of provider cards ----
+    if (!cur) {
+      return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h3", {
         style: {
-          border: "1px solid var(--border)",
-          borderRadius: 12,
-          padding: 14,
-          marginTop: 12,
-          outline: active === pid ? "2px solid var(--accent)" : "none"
+          marginBottom: 6
         }
-      }, /*#__PURE__*/React.createElement("div", {
+      }, "Providers"), /*#__PURE__*/React.createElement("p", {
         style: {
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          marginBottom: 10
+          fontSize: 13,
+          color: "var(--text-3)",
+          marginTop: 0
         }
-      }, /*#__PURE__*/React.createElement("label", {
+      }, "Connect an AI provider to add models to your chat. Click one to paste its key and pick models. Keys stay on this device (chmod\xA0600). Look for the", /*#__PURE__*/React.createElement("span", {
         style: {
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          fontWeight: 650,
-          cursor: "pointer",
-          flex: 1
-        }
-      }, /*#__PURE__*/React.createElement("input", {
-        type: "radio",
-        name: "activeprov",
-        checked: active === pid,
-        onChange: () => setActiveProv(pid)
-      }), p.label, p.free && /*#__PURE__*/React.createElement("span", {
-        style: {
-          fontSize: 10.5,
+          fontSize: 10,
           fontWeight: 700,
           color: "var(--green)",
           border: "1px solid var(--green)",
           borderRadius: 6,
-          padding: "1px 5px"
+          padding: "1px 5px",
+          margin: "0 4px"
         }
-      }, "FREE"), p.key_set && /*#__PURE__*/React.createElement("span", {
+      }, "FREE"), "tag for no-cost tiers."), /*#__PURE__*/React.createElement("div", {
         style: {
-          fontSize: 11,
-          color: "var(--green)"
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+          gap: 12,
+          marginTop: 14
         }
-      }, "\u25CF key set"), en.length > 0 && /*#__PURE__*/React.createElement("span", {
-        style: {
-          fontSize: 11,
-          color: "var(--text-3)"
-        }
-      }, en.length, " enabled"), active === pid && /*#__PURE__*/React.createElement("span", {
-        style: {
-          fontSize: 11,
-          color: "var(--accent-deep)"
-        }
-      }, "active"))), p.free && p.free_note && /*#__PURE__*/React.createElement("p", {
-        style: {
-          fontSize: 12,
-          color: "var(--text-3)",
-          margin: "0 0 8px"
-        }
-      }, "\u2728 ", p.free_note), p.needs_key && /*#__PURE__*/React.createElement("div", {
-        style: {
-          marginBottom: 8
-        }
-      }, /*#__PURE__*/React.createElement("label", {
-        className: "field-label"
-      }, "API key", p.signup_url && /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 ", /*#__PURE__*/React.createElement("a", {
-        href: p.signup_url,
-        target: "_blank",
-        rel: "noreferrer",
-        style: {
-          color: "var(--accent-deep)"
-        }
-      }, "get a key \u2192"))), /*#__PURE__*/React.createElement("input", {
-        className: "field",
-        type: "password",
-        placeholder: p.key_set ? "•••••• saved — paste to replace" : "paste API key",
-        value: draft[pid].key,
-        onChange: e => upd(pid, "key", e.target.value)
-      })), pid === "local" && /*#__PURE__*/React.createElement("div", {
-        style: {
-          marginBottom: 8
-        }
-      }, /*#__PURE__*/React.createElement("label", {
-        className: "field-label"
-      }, "Base URL"), /*#__PURE__*/React.createElement("input", {
-        className: "field",
-        value: draft[pid].base_url,
-        onChange: e => upd(pid, "base_url", e.target.value)
-      }), /*#__PURE__*/React.createElement("p", {
-        style: {
-          fontSize: 12,
-          color: "var(--text-3)",
-          margin: "6px 0 0"
-        }
-      }, "Point this at the server that hosts your models, then Fetch: Ollama ", /*#__PURE__*/React.createElement("code", null, "http://localhost:11434/v1"), ", LM Studio / MLX ", /*#__PURE__*/React.createElement("code", null, "http://localhost:1234/v1"), ". Note: an agent gateway exposes only its own agent \u2014 for the raw local models use the model server's port.")), /*#__PURE__*/React.createElement("div", {
-        style: {
-          display: "flex",
-          gap: 8,
-          alignItems: "center"
-        }
-      }, /*#__PURE__*/React.createElement("button", {
-        className: "btn btn-outline",
-        disabled: st.busy,
-        onClick: () => fetchModels(pid)
-      }, st.busy ? "Fetching…" : "Fetch models"), st.msg && /*#__PURE__*/React.createElement("span", {
-        style: {
-          fontSize: 12,
-          color: st.ok ? "var(--green)" : st.ok === false ? "var(--red)" : "var(--text-3)"
-        }
-      }, st.msg)), av && av.length > 0 && /*#__PURE__*/React.createElement("div", {
-        style: {
-          marginTop: 10,
-          maxHeight: 160,
-          overflow: "auto",
-          border: "1px solid var(--border)",
-          borderRadius: 9,
-          padding: 8
-        }
-      }, av.map(m => /*#__PURE__*/React.createElement("label", {
-        key: m,
-        style: {
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "4px 6px",
-          cursor: "pointer",
-          fontSize: 13.5
-        }
-      }, /*#__PURE__*/React.createElement("input", {
-        type: "checkbox",
-        checked: en.includes(m),
-        onChange: () => toggleModel(pid, m)
-      }), " ", m))), (av || en.length > 0) && /*#__PURE__*/React.createElement("div", {
-        style: {
-          marginTop: 10
-        }
-      }, /*#__PURE__*/React.createElement("button", {
-        className: "btn btn-primary",
-        onClick: () => save(pid)
-      }, "Save ", en.length, " model", en.length === 1 ? "" : "s")));
-    }));
+      }, PROV_ORDER.map(pid => {
+        const p = provs[pid],
+          en = enabled[pid] || [],
+          Ic = I[PIC[pid]] || I.Bot;
+        const connected = p.key_set || !p.needs_key && en.length || pid === "local";
+        return /*#__PURE__*/React.createElement("button", {
+          key: pid,
+          onClick: () => {
+            setOpen(pid);
+            setStatus(s => ({
+              ...s,
+              [pid]: {}
+            }));
+          },
+          style: {
+            textAlign: "left",
+            border: "1px solid var(--border)",
+            borderRadius: 13,
+            padding: 14,
+            background: "var(--surface)",
+            cursor: "pointer",
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+            outline: active === pid ? "1.5px solid var(--accent)" : "none",
+            transition: "border-color .15s"
+          },
+          onMouseEnter: e => e.currentTarget.style.borderColor = "var(--accent)",
+          onMouseLeave: e => e.currentTarget.style.borderColor = "var(--border)"
+        }, /*#__PURE__*/React.createElement("div", {
+          style: {
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between"
+          }
+        }, /*#__PURE__*/React.createElement("span", {
+          style: {
+            display: "inline-flex",
+            width: 38,
+            height: 38,
+            borderRadius: 10,
+            alignItems: "center",
+            justifyContent: "center",
+            background: "color-mix(in srgb, var(--accent) 12%, transparent)",
+            color: "var(--accent-deep)"
+          }
+        }, /*#__PURE__*/React.createElement(Ic, {
+          size: 21
+        })), active === pid ? /*#__PURE__*/React.createElement("span", {
+          style: {
+            fontSize: 11,
+            fontWeight: 650,
+            color: "var(--accent-deep)"
+          }
+        }, "\u25CF active") : connected ? /*#__PURE__*/React.createElement("span", {
+          style: {
+            fontSize: 11,
+            fontWeight: 600,
+            color: "var(--green)"
+          }
+        }, "connected") : /*#__PURE__*/React.createElement("span", {
+          style: {
+            fontSize: 11,
+            color: "var(--text-3)"
+          }
+        }, "not set")), /*#__PURE__*/React.createElement("div", {
+          style: {
+            fontWeight: 650,
+            fontSize: 14.5,
+            display: "flex",
+            alignItems: "center",
+            gap: 6
+          }
+        }, p.label, p.free && /*#__PURE__*/React.createElement("span", {
+          style: {
+            fontSize: 9.5,
+            fontWeight: 700,
+            color: "var(--green)",
+            border: "1px solid var(--green)",
+            borderRadius: 5,
+            padding: "0 4px"
+          }
+        }, "FREE")), /*#__PURE__*/React.createElement("div", {
+          style: {
+            fontSize: 12,
+            color: "var(--text-3)"
+          }
+        }, en.length ? en.length + " model" + (en.length === 1 ? "" : "s") + " enabled" : "tap to set up"));
+      })));
+    }
+
+    // ---- focused provider config ----
+    const pid = open,
+      p = cur,
+      st = status[pid] || {},
+      av = avail[pid],
+      en = enabled[pid] || [],
+      Ic = I[PIC[pid]] || I.Bot;
+    return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost",
+      style: {
+        padding: "4px 8px",
+        marginBottom: 12
+      },
+      onClick: () => setOpen(null)
+    }, /*#__PURE__*/React.createElement(I.ChevronRight, {
+      size: 15,
+      style: {
+        transform: "rotate(180deg)"
+      }
+    }), " All providers"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        marginBottom: 4
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        display: "inline-flex",
+        width: 44,
+        height: 44,
+        borderRadius: 11,
+        alignItems: "center",
+        justifyContent: "center",
+        background: "color-mix(in srgb, var(--accent) 12%, transparent)",
+        color: "var(--accent-deep)"
+      }
+    }, /*#__PURE__*/React.createElement(Ic, {
+      size: 25
+    })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontWeight: 700,
+        fontSize: 17,
+        display: "flex",
+        alignItems: "center",
+        gap: 8
+      }
+    }, p.label, p.free && /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10,
+        fontWeight: 700,
+        color: "var(--green)",
+        border: "1px solid var(--green)",
+        borderRadius: 5,
+        padding: "1px 5px"
+      }
+    }, "FREE"), active === pid && /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 11,
+        color: "var(--accent-deep)"
+      }
+    }, "\u25CF active")), p.free && p.free_note && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12.5,
+        color: "var(--text-3)"
+      }
+    }, p.free_note))), p.needs_key && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginTop: 14
+      }
+    }, /*#__PURE__*/React.createElement("label", {
+      className: "field-label"
+    }, "API key", p.signup_url && /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 ", /*#__PURE__*/React.createElement("a", {
+      href: p.signup_url,
+      target: "_blank",
+      rel: "noreferrer",
+      style: {
+        color: "var(--accent-deep)"
+      }
+    }, "get a key \u2192"))), /*#__PURE__*/React.createElement("input", {
+      className: "field",
+      type: "password",
+      placeholder: p.key_set ? "•••••• saved — paste to replace" : "paste API key",
+      value: draft[pid].key,
+      onChange: e => upd(pid, "key", e.target.value)
+    })), pid === "local" && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginTop: 14
+      }
+    }, /*#__PURE__*/React.createElement("label", {
+      className: "field-label"
+    }, "Server URL"), /*#__PURE__*/React.createElement("input", {
+      className: "field",
+      value: draft[pid].base_url,
+      onChange: e => upd(pid, "base_url", e.target.value),
+      placeholder: "http://localhost:11434"
+    }), /*#__PURE__*/React.createElement("p", {
+      style: {
+        fontSize: 12,
+        color: "var(--text-3)",
+        margin: "6px 0 0"
+      }
+    }, "Where your models run \u2014 Ollama ", /*#__PURE__*/React.createElement("code", null, "http://localhost:11434"), ", LM Studio / MLX ", /*#__PURE__*/React.createElement("code", null, "http://localhost:1234"), ". The ", /*#__PURE__*/React.createElement("code", null, "/v1"), " is added automatically.")), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: 8,
+        alignItems: "center",
+        marginTop: 12
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-outline",
+      disabled: st.busy,
+      onClick: () => fetchModels(pid)
+    }, st.busy ? "Fetching…" : "Fetch models"), st.msg && /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 12,
+        color: st.ok ? "var(--green)" : st.ok === false ? "var(--red)" : "var(--text-3)"
+      }
+    }, st.msg)), av && av.length > 0 && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginTop: 12,
+        maxHeight: 220,
+        overflow: "auto",
+        border: "1px solid var(--border)",
+        borderRadius: 10,
+        padding: 8
+      }
+    }, av.map(m => /*#__PURE__*/React.createElement("label", {
+      key: m,
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "5px 6px",
+        cursor: "pointer",
+        fontSize: 13.5,
+        borderRadius: 7
+      }
+    }, /*#__PURE__*/React.createElement("input", {
+      type: "checkbox",
+      checked: en.includes(m),
+      onChange: () => toggleModel(pid, m)
+    }), " ", m))), (av || en.length > 0) && /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: 8,
+        marginTop: 14
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-primary",
+      onClick: () => save(pid)
+    }, "Save ", en.length, " model", en.length === 1 ? "" : "s"), en.length > 0 && active !== pid && /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-outline",
+      onClick: () => setActiveProv(pid)
+    }, "Set as active")));
   }
 
   // ---- Agent panel (install / detect / update Hermes & OpenClaw) ----
