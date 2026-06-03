@@ -2452,6 +2452,108 @@ That's a lot of water for a moon smaller than ours.`;
 
   // ---- Agent panel (install / detect / update Hermes & OpenClaw) ----
   // ---- Browser control (browser-use): let the agent drive a real browser ----
+  // ---- Multiple agents: pick which Hermes profile to chat with ----
+  function AgentProfilesCard({
+    onToast
+  }) {
+    const [data, setData] = React.useState(null);
+    const load = () => fetch("/api/agent-profiles").then(r => r.json()).then(setData).catch(() => {});
+    React.useEffect(() => {
+      load();
+    }, []);
+    if (!data || !data.profiles || data.profiles.length < 2) return null; // only when there's a choice
+    const pick = name => {
+      fetch("/api/config", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          agent_profile: name
+        })
+      }).then(r => r.json()).then(() => {
+        onToast && onToast({
+          type: "success",
+          title: "Active agent: " + (name || "auto")
+        });
+        load();
+      });
+    };
+    const active = data.active || "";
+    return /*#__PURE__*/React.createElement("div", {
+      className: "set-section",
+      style: {
+        marginTop: 26
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "sec-title"
+    }, "Your agents"), /*#__PURE__*/React.createElement("p", {
+      style: {
+        fontSize: 13,
+        color: "var(--text-3)",
+        marginTop: 2
+      }
+    }, "You have more than one Hermes agent (profile). Pick which one chats answer through. Each has its own model, memory, and skills."), data.profiles.map(p => {
+      const on = active ? active === p.name : p.name === "default";
+      return /*#__PURE__*/React.createElement("label", {
+        key: p.name,
+        style: {
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          border: "1px solid var(--border)",
+          borderRadius: 12,
+          padding: 13,
+          marginTop: 8,
+          cursor: "pointer",
+          outline: on ? "2px solid var(--accent)" : "none"
+        }
+      }, /*#__PURE__*/React.createElement("input", {
+        type: "radio",
+        name: "agentprofile",
+        checked: on,
+        onChange: () => pick(p.name)
+      }), /*#__PURE__*/React.createElement("div", {
+        style: {
+          flex: 1
+        }
+      }, /*#__PURE__*/React.createElement("div", {
+        style: {
+          fontWeight: 650
+        }
+      }, p.name, p.name === "default" ? " (main)" : ""), /*#__PURE__*/React.createElement("div", {
+        style: {
+          fontSize: 12.5,
+          color: "var(--text-3)"
+        }
+      }, p.model || "model not set", p.provider ? " · " + p.provider : "")), /*#__PURE__*/React.createElement("span", {
+        style: {
+          fontSize: 11.5,
+          color: p.running ? "var(--green)" : "var(--text-3)",
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 5
+        }
+      }, /*#__PURE__*/React.createElement("span", {
+        style: {
+          width: 7,
+          height: 7,
+          borderRadius: 9,
+          background: p.running ? "var(--green)" : "var(--text-3)"
+        }
+      }), p.running ? "running" : "stopped"));
+    }), /*#__PURE__*/React.createElement("p", {
+      style: {
+        fontSize: 11.5,
+        color: "var(--text-3)",
+        marginTop: 8
+      }
+    }, "A profile must be running with its API enabled to chat through it. Start one with", /*#__PURE__*/React.createElement("code", {
+      style: {
+        margin: "0 4px"
+      }
+    }, "hermes --profile <name> gateway start"), "."));
+  }
   function BrowserUseCard({
     onToast
   }) {
@@ -2680,7 +2782,9 @@ That's a lot of water for a moon smaller than ours.`;
         fontSize: 12,
         whiteSpace: "pre-wrap"
       }
-    }, log), /*#__PURE__*/React.createElement(BrowserUseCard, {
+    }, log), /*#__PURE__*/React.createElement(AgentProfilesCard, {
+      onToast: onToast
+    }), /*#__PURE__*/React.createElement(BrowserUseCard, {
       onToast: onToast
     }));
   }

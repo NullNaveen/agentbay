@@ -1861,6 +1861,81 @@ def _local_gateway_base():
     return b if b.endswith("/v1") else b + "/v1"
 
 
+def _gateway_up(port, timeout=1.0):
+    """Is a Hermes agent API serving on this localhost port?"""
+    try:
+        req = urllib.request.Request("http://127.0.0.1:%s/v1/models" % port)
+        d = json.loads(_urlopen(req, timeout).read())
+        ids = [m.get("id", "") for m in d.get("data", []) if isinstance(m, dict)]
+        return any(("hermes" in i.lower() or "agent" in i.lower()) for i in ids)
+    except Exception:
+        return False
+
+
+def _read_profile_cfg(cf):
+    try:
+        text = cf.read_text()
+    except Exception:
+        return {"model": "", "provider": "", "port": 8642}
+    # Prefer PyYAML; fall back to a small regex reader (the server's Python may not
+    # have PyYAML, and the keys we need are simple top-level scalars).
+    try:
+        import yaml
+        d = yaml.safe_load(text) or {}
+        m = d.get("model") if isinstance(d.get("model"), dict) else {}
+        api = d.get("api_server")
+        if not isinstance(api, dict):
+            api = (d.get("platforms") or {}).get("api_server") if isinstance(d.get("platforms"), dict) else {}
+        port = (api or {}).get("port") if isinstance(api, dict) else None
+        return {"model": m.get("default") or "", "provider": m.get("provider") or "", "port": port or 8642}
+    except Exception:
+        pass
+    def _grab(block, key, indented=False):
+        anchor = r"^[ \t]+%s:" if indented else r"^%s:"
+        m = re.search(r"(?m)" + (anchor % re.escape(block)) + r"\s*\n((?:[ \t]+.*\n?)+)", text)
+        if not m:
+            return ""
+        mm = re.search(r"(?m)^[ \t]+%s:\s*(.+)$" % re.escape(key), m.group(1))
+        return (mm.group(1).strip().strip('"').strip("'") if mm else "")
+    port = _grab("api_server", "port") or _grab("api_server", "port", indented=True)
+    try:
+        port = int(port)
+    except Exception:
+        port = 8642
+    return {"model": _grab("model", "default"), "provider": _grab("model", "provider"), "port": port}
+
+
+def list_hermes_profiles():
+    """Enumerate Hermes profiles (each is a separate agent with its own config +
+    gateway): the default at ~/.hermes/config.yaml and named ones under
+    ~/.hermes/profiles/<name>/. Reports each one's model + gateway port + whether
+    it's running, so AgentBay can let the user pick which agent to chat with."""
+    base = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
+    out, seen = [], set()
+
+    def add(name, cf):
+        if name in seen or not cf.is_file():
+            return
+        seen.add(name)
+        info = _read_profile_cfg(cf)
+        out.append({
+            "name": name, "model": info["model"], "provider": info["provider"],
+            "port": info["port"], "base_url": "http://127.0.0.1:%s/v1" % info["port"],
+            "running": _gateway_up(info["port"]),
+        })
+
+    add("default", base / "config.yaml")
+    pdir = base / "profiles"
+    if pdir.is_dir():
+        try:
+            for d in sorted(pdir.iterdir()):
+                if d.is_dir():
+                    add(d.name, d / "config.yaml")
+        except Exception:
+            pass
+    return out
+
+
 def detect_local_gateway(timeout=1.2, ttl=20):
     """Probe the local Hermes gateway; cache the result briefly. Returns
     {base_url, key} if a Hermes agent API is reachable, else None."""
@@ -1892,6 +1967,12 @@ def _agent_gateway(cfg):
     instead of as a raw LLM. Set agent_mode:false in config to force direct calls."""
     if cfg.get("agent_mode") is False:
         return None
+    # An explicitly chosen Hermes profile (multi-agent) wins — route to its port.
+    prof = cfg.get("agent_profile")
+    if prof:
+        for p in list_hermes_profiles():
+            if p["name"] == prof:
+                return {"base_url": p["base_url"], "key": ""}
     loc = cfg.get("providers", {}).get("local", {})
     base = (loc.get("base_url") or "").rstrip("/")
     key = loc.get("key") or ""
@@ -2258,6 +2339,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, list_sessions())
         if path == "/api/skill/browser-use":
             return self._send(200, browser_use_status())
+        if path == "/api/agent-profiles":
+            cfg = load_config()
+            return self._send(200, {"profiles": list_hermes_profiles(), "active": cfg.get("agent_profile") or ""})
         if path == "/api/import/sessions":
             try:
                 return self._send(200, {"sessions": read_agent_sessions()})
@@ -2316,6 +2400,8 @@ class Handler(BaseHTTPRequestHandler):
             updates = {}
             if "agent" in data:
                 updates["agent"] = data["agent"]
+            if "agent_profile" in data:
+                updates["agent_profile"] = data["agent_profile"] or ""   # which Hermes profile/agent to chat with
             if "provider" in data and data["provider"] in PROVIDERS:
                 updates["provider"] = data["provider"]
             if "active_model" in data:
