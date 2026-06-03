@@ -3265,7 +3265,7 @@ Object.assign(window, {
         setSessions((ss) => {
           const have = new Set(ss.map((s) => s.id));
           const add = imp.filter((s) => !have.has(s.id)).map((s) => ({
-            id: s.id, title: s.title, model: s.model || "", tags: s.tags || ["imported"],
+            id: s.id, title: s.title, model: s.model || "", tags: s.tags || [],
             pinned: false, updated: s.updated || Date.now(), group: grpFor(s.updated), messages: s.messages }));
           added = add.length;
           return add.length ? [...add, ...ss] : ss;

@@ -2551,6 +2551,36 @@ def _shq(s):
     return str(s).replace('"', '\\"')
 
 
+def _is_wsl():
+    try:
+        return "microsoft" in platform.uname().release.lower() or os.path.exists("/proc/sys/fs/binfmt_misc/WSLInterop")
+    except Exception:
+        return False
+
+
+def _open_browser(url):
+    """Open the UI without crashing on headless/WSL setups. On WSL we hand the URL
+    to the Windows browser; on a Linux box with no display we skip quietly (the URL
+    is printed for the user)."""
+    try:
+        if _is_wsl():
+            for cmd in (["wslview", url],
+                        ["powershell.exe", "-NoProfile", "-Command", "Start-Process", url],
+                        ["cmd.exe", "/c", "start", "", url]):
+                try:
+                    if cmd[0].endswith(".exe") or shutil.which(cmd[0]):
+                        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        return
+                except Exception:
+                    continue
+            return
+        if platform.system() == "Linux" and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+            return                                  # headless server — nothing to open
+        webbrowser.open(url)
+    except Exception:
+        pass
+
+
 def free_port(host, port):
     # SO_REUSEADDR so a recently-closed server in TIME_WAIT doesn't push us to a
     # random port on restart (matches HTTPServer.allow_reuse_address).
@@ -2586,6 +2616,28 @@ def main():
     # First run on a real desktop: drop a clickable launcher (Desktop / Start Menu /
     # Applications) so the user never needs a terminal again. Skip on the headless
     # EC2 multi-user services (AGENTBAY_PROFILE) and Linux boxes with no desktop.
+    # First run with an agent present: set up browser-use in the background so it
+    # ships with AgentBay (no manual click). Skipped on EC2 (shared setup exists).
+    def _maybe_browser_use():
+        flag = CONFIG_DIR / ".browser_use_auto"
+        if flag.exists() or os.environ.get("AGENTBAY_PROFILE"):
+            return
+        if not (which("hermes") or which("openclaw")):
+            return                                  # no agent yet — nothing to attach to
+        if browser_use_status().get("installed"):
+            try: flag.write_text("1")
+            except Exception: pass
+            return
+        try:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True); flag.write_text("1")
+        except Exception:
+            pass
+        job = "browser-use-auto"
+        with _job_lock:
+            _install_jobs[job] = {"status": "running", "log": [], "agent": "browser-use"}
+        install_browser_use(job)
+    threading.Thread(target=_maybe_browser_use, daemon=True).start()
+
     def _maybe_shortcut():
         if _SHORTCUT_FLAG.exists() or os.environ.get("AGENTBAY_PROFILE"):
             return
@@ -2608,9 +2660,9 @@ def main():
 
     httpd = ThreadingHTTPServer((args.host, port), Handler)
     url = f"http://{args.host}:{port}/"
-    print(f"\n  AgentBay running → {url}\n  (Ctrl-C to stop)\n")
+    print(f"\n  ✅ AgentBay is running.\n  →  Open this in your browser:  {url}\n  (Ctrl-C to stop)\n")
     if not args.no_browser:
-        threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+        threading.Timer(0.8, lambda: _open_browser(url)).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

@@ -317,7 +317,7 @@ body.no-anim *::after {
 .bubbles-off .user-bubble { background: transparent; padding: 10px 0; max-width: 100%; }
 
 .assistant-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.assistant-head .am-icon { width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-deep); overflow: hidden; }
+.assistant-head .am-icon { width: 24px; height: 24px; display: grid; place-items: center; background: transparent; color: var(--accent-deep); overflow: visible; }
 .assistant-head .am-icon svg { width: 17px; height: 17px; }
 /* Motion only while the model is generating; perfectly still once it stops. */
 .assistant-head .am-icon.thinking { animation: am-think 1.4s var(--ease-out) infinite; }

@@ -7027,7 +7027,7 @@ Object.assign(window, {
             id: s.id,
             title: s.title,
             model: s.model || "",
-            tags: s.tags || ["imported"],
+            tags: s.tags || [],
             pinned: false,
             updated: s.updated || Date.now(),
             group: grpFor(s.updated),
