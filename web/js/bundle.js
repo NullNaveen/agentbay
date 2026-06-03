@@ -1634,14 +1634,16 @@ That's a lot of water for a moon smaller than ours.`;
       className: "ts"
     }, msg.ts)), msg.thought ? /*#__PURE__*/React.createElement(Activity, {
       seconds: msg.thought
-    }) : null, !streaming && showThinking && msg.reasoning ? /*#__PURE__*/React.createElement("details", {
-      className: "agent-trace"
+    }) : null, showThinking && msg.reasoning ? /*#__PURE__*/React.createElement("details", {
+      className: "agent-trace",
+      open: streaming
     }, /*#__PURE__*/React.createElement("summary", null, /*#__PURE__*/React.createElement(I.Sparkle, {
       size: 13
-    }), " Thinking"), /*#__PURE__*/React.createElement("div", {
+    }), " Thinking", streaming ? "…" : ""), /*#__PURE__*/React.createElement("div", {
       className: "agent-trace-body"
-    }, msg.reasoning)) : null, !streaming && showTools && msg.tools && msg.tools.length ? /*#__PURE__*/React.createElement("details", {
-      className: "agent-trace"
+    }, msg.reasoning)) : null, showTools && msg.tools && msg.tools.length ? /*#__PURE__*/React.createElement("details", {
+      className: "agent-trace",
+      open: streaming
     }, /*#__PURE__*/React.createElement("summary", null, /*#__PURE__*/React.createElement(I.Wand, {
       size: 13
     }), " Tools used (", msg.tools.length, ")"), /*#__PURE__*/React.createElement("div", {
@@ -1774,7 +1776,9 @@ That's a lot of water for a moon smaller than ours.`;
       const isStreamingThis = streaming && isLast;
       const liveMsg = isStreamingThis ? {
         ...m,
-        content: streaming.text
+        content: streaming.text,
+        reasoning: streaming.reasoning || m.reasoning,
+        tools: streaming.tools && streaming.tools.length ? streaming.tools : m.tools
       } : m;
       return /*#__PURE__*/React.createElement(AssistantTurn, {
         key: i,
@@ -7508,20 +7512,24 @@ Object.assign(window, {
         content: sysBlocks[i]
       });
 
-      // real backend call → AgentBay /api/chat. model id = "provider::model"
+      // real backend call → AgentBay. model id = "provider::model"
       const [provId, ...rest] = String(model || "").split("::");
       const modelName = rest.join("::");
-      fetch("/api/chat", {
+      const reqBody = JSON.stringify({
+        messages: history,
+        provider: provId || undefined,
+        model: modelName || undefined,
+        session_id: sessionId
+      });
+
+      // Live streaming: render tokens + the agent's thinking + tool calls as they
+      // arrive. Falls back to the plain /api/chat + typewriter on any error.
+      const fallback = () => fetch("/api/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({
-          messages: history,
-          provider: provId || undefined,
-          model: modelName || undefined,
-          session_id: sessionId
-        })
+        body: reqBody
       }).then(r => r.json()).then(d => {
         if (streamRef.current === "cancel") {
           finalize(sessionId, "", followups, t0);
@@ -7531,9 +7539,95 @@ Object.assign(window, {
           reasoning: d.reasoning || "",
           tools: d.tools || []
         };
-        const full = d.reply || "⚠ " + (d.error || "no response from model");
-        runTypewriter(sessionId, full, followups, t0);
+        runTypewriter(sessionId, d.reply || "⚠ " + (d.error || "no response from model"), followups, t0);
       }).catch(e => runTypewriter(sessionId, "⚠ " + e, followups, t0));
+      (async () => {
+        let resp;
+        try {
+          resp = await fetch("/api/chat/stream", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: reqBody
+          });
+          if (!resp.ok || !resp.body) throw new Error("no stream");
+        } catch (e) {
+          return fallback();
+        }
+        const reader = resp.body.getReader();
+        const dec = new TextDecoder();
+        let buf = "",
+          content = "",
+          reasoning = "",
+          tools = [],
+          gotAny = false;
+        const pump = extra => setStreaming({
+          sessionId,
+          text: content,
+          reasoning,
+          tools: tools.slice(),
+          phase: content ? "stream" : "think",
+          ...extra
+        });
+        try {
+          while (true) {
+            const {
+              done,
+              value
+            } = await reader.read();
+            if (done) break;
+            if (streamRef.current === "cancel") {
+              try {
+                reader.cancel();
+              } catch (e) {}
+              finalize(sessionId, content, followups, t0);
+              return;
+            }
+            buf += dec.decode(value, {
+              stream: true
+            });
+            let nl;
+            while ((nl = buf.indexOf("\n\n")) >= 0) {
+              const line = buf.slice(0, nl).split("\n").find(l => l.startsWith("data:"));
+              buf = buf.slice(nl + 2);
+              if (!line) continue;
+              let ev;
+              try {
+                ev = JSON.parse(line.slice(5).trim());
+              } catch (e) {
+                continue;
+              }
+              gotAny = true;
+              if (ev.type === "token") {
+                content += ev.data;
+                pump();
+              } else if (ev.type === "reasoning") {
+                reasoning += ev.data;
+                pump();
+              } else if (ev.type === "tool") {
+                const i = ev.data.index || 0;
+                tools[i] = {
+                  name: ev.data.name,
+                  args: ev.data.args
+                };
+                pump();
+              } else if (ev.type === "error") {
+                content = content || "⚠ " + ev.data;
+                pump();
+              }
+            }
+          }
+        } catch (e) {
+          if (!gotAny) return fallback();
+        }
+        if (!gotAny) return fallback();
+        metaRef.current[sessionId] = {
+          reasoning,
+          tools: tools.filter(Boolean)
+        };
+        finalize(sessionId, content || "⚠ no response from model", followups, t0);
+      })();
     };
     const finalize = (sessionId, full, followups, t0) => {
       const secs = Math.max(1, Math.round((Date.now() - t0) / 1000));

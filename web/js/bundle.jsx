@@ -835,14 +835,14 @@ That's a lot of water for a moon smaller than ours.`;
 
         {msg.thought ? <Activity seconds={msg.thought} /> : null}
 
-        {!streaming && showThinking && msg.reasoning ? (
-          <details className="agent-trace">
-            <summary><I.Sparkle size={13} /> Thinking</summary>
+        {showThinking && msg.reasoning ? (
+          <details className="agent-trace" open={streaming}>
+            <summary><I.Sparkle size={13} /> Thinking{streaming ? "…" : ""}</summary>
             <div className="agent-trace-body">{msg.reasoning}</div>
           </details>
         ) : null}
-        {!streaming && showTools && msg.tools && msg.tools.length ? (
-          <details className="agent-trace">
+        {showTools && msg.tools && msg.tools.length ? (
+          <details className="agent-trace" open={streaming}>
             <summary><I.Wand size={13} /> Tools used ({msg.tools.length})</summary>
             <div className="agent-trace-body">
               {msg.tools.map((t, i) => (
@@ -928,7 +928,7 @@ That's a lot of water for a moon smaller than ours.`;
               return <div className="turn user anim-fadeup" key={i}><div className="user-bubble">{m.content}</div></div>;
             }
             const isStreamingThis = streaming && isLast;
-            const liveMsg = isStreamingThis ? { ...m, content: streaming.text } : m;
+            const liveMsg = isStreamingThis ? { ...m, content: streaming.text, reasoning: streaming.reasoning || m.reasoning, tools: streaming.tools && streaming.tools.length ? streaming.tools : m.tools } : m;
             return <AssistantTurn key={i} msg={liveMsg} streaming={isStreamingThis} isLast={isLast}
               onFollowup={onFollowup} onToast={onToast} showTimestamps={settings.timestamps}
               showThinking={settings.showThinking} showTools={settings.showTools} onRegen={onRegen} />;
@@ -3552,21 +3552,54 @@ Object.assign(window, {
       // unshift in reverse so final order is [project, agent, preferences]
       for (let i = sysBlocks.length - 1; i >= 0; i--) history.unshift({ role: "system", content: sysBlocks[i] });
 
-      // real backend call → AgentBay /api/chat. model id = "provider::model"
+      // real backend call → AgentBay. model id = "provider::model"
       const [provId, ...rest] = String(model || "").split("::");
       const modelName = rest.join("::");
-      fetch("/api/chat", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history, provider: provId || undefined, model: modelName || undefined, session_id: sessionId }),
-      })
-        .then((r) => r.json())
-        .then((d) => {
+      const reqBody = JSON.stringify({ messages: history, provider: provId || undefined, model: modelName || undefined, session_id: sessionId });
+
+      // Live streaming: render tokens + the agent's thinking + tool calls as they
+      // arrive. Falls back to the plain /api/chat + typewriter on any error.
+      const fallback = () => fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: reqBody })
+        .then((r) => r.json()).then((d) => {
           if (streamRef.current === "cancel") { finalize(sessionId, "", followups, t0); return; }
           metaRef.current[sessionId] = { reasoning: d.reasoning || "", tools: d.tools || [] };
-          const full = d.reply || ("⚠ " + (d.error || "no response from model"));
-          runTypewriter(sessionId, full, followups, t0);
-        })
-        .catch((e) => runTypewriter(sessionId, "⚠ " + e, followups, t0));
+          runTypewriter(sessionId, d.reply || ("⚠ " + (d.error || "no response from model")), followups, t0);
+        }).catch((e) => runTypewriter(sessionId, "⚠ " + e, followups, t0));
+
+      (async () => {
+        let resp;
+        try {
+          resp = await fetch("/api/chat/stream", { method: "POST", headers: { "Content-Type": "application/json" }, body: reqBody });
+          if (!resp.ok || !resp.body) throw new Error("no stream");
+        } catch (e) { return fallback(); }
+        const reader = resp.body.getReader();
+        const dec = new TextDecoder();
+        let buf = "", content = "", reasoning = "", tools = [], gotAny = false;
+        const pump = (extra) => setStreaming({ sessionId, text: content, reasoning, tools: tools.slice(), phase: content ? "stream" : "think", ...extra });
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (streamRef.current === "cancel") { try { reader.cancel(); } catch (e) {} finalize(sessionId, content, followups, t0); return; }
+            buf += dec.decode(value, { stream: true });
+            let nl;
+            while ((nl = buf.indexOf("\n\n")) >= 0) {
+              const line = buf.slice(0, nl).split("\n").find((l) => l.startsWith("data:"));
+              buf = buf.slice(nl + 2);
+              if (!line) continue;
+              let ev; try { ev = JSON.parse(line.slice(5).trim()); } catch (e) { continue; }
+              gotAny = true;
+              if (ev.type === "token") { content += ev.data; pump(); }
+              else if (ev.type === "reasoning") { reasoning += ev.data; pump(); }
+              else if (ev.type === "tool") { const i = ev.data.index || 0; tools[i] = { name: ev.data.name, args: ev.data.args }; pump(); }
+              else if (ev.type === "error") { content = content || ("⚠ " + ev.data); pump(); }
+            }
+          }
+        } catch (e) { if (!gotAny) return fallback(); }
+        if (!gotAny) return fallback();
+        metaRef.current[sessionId] = { reasoning, tools: tools.filter(Boolean) };
+        finalize(sessionId, content || "⚠ no response from model", followups, t0);
+      })();
     };
 
     const finalize = (sessionId, full, followups, t0) => {

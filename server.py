@@ -2065,6 +2065,66 @@ def _agent_chat(gw, provider, model, messages, session_id=None, timeout=600):
     return reply, d.get("usage", {}), extra
 
 
+def _agent_chat_stream(gw, provider, model, messages, session_id=None, timeout=600):
+    """Stream a chat turn through the agent gateway. Yields (type, data) events:
+    ('token', str) reply text, ('reasoning', str) the agent's thinking,
+    ('tool', {name,args,index}) a tool call as it forms, ('done', {}). Falls back
+    to one ('token', full)+('done') if the gateway doesn't actually stream."""
+    conv = [{"role": m["role"], "content": m["content"]} for m in messages
+            if m.get("role") in ("user", "assistant", "system") and m.get("content")]
+    body = {"model": model or "default", "messages": conv, "stream": True}
+    if provider in _GATEWAY_PROVIDER_NAMES:
+        body["provider"] = provider
+    headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
+    if gw.get("key"):
+        headers["Authorization"] = f"Bearer {gw['key']}"
+    if session_id and gw.get("key"):
+        headers["X-Hermes-Session-Id"] = str(session_id)
+        headers["X-Hermes-Session-Key"] = f"agentbay:{session_id}"
+    req = urllib.request.Request(gw["base_url"] + "/chat/completions",
+                                 data=json.dumps(body).encode(), headers=headers)
+    tools_acc, got = {}, False
+    with _urlopen(req, timeout) as r:
+        for raw in r:
+            line = raw.decode("utf-8", "ignore").strip()
+            if not line or not line.startswith("data:"):
+                continue
+            payload = line[5:].strip()
+            if payload == "[DONE]":
+                break
+            try:
+                d = json.loads(payload)
+            except Exception:
+                continue
+            delta = (d.get("choices") or [{}])[0].get("delta") or {}
+            if delta.get("content"):
+                got = True
+                yield ("token", delta["content"])
+            rc = delta.get("reasoning_content") or delta.get("reasoning")
+            if rc:
+                got = True
+                yield ("reasoning", rc)
+            for tc in (delta.get("tool_calls") or []):
+                idx = tc.get("index", 0)
+                fn = tc.get("function") or {}
+                acc = tools_acc.setdefault(idx, {"name": "", "args": ""})
+                if fn.get("name"):
+                    acc["name"] = fn["name"]
+                if fn.get("arguments"):
+                    acc["args"] += fn["arguments"]
+                got = True
+                yield ("tool", {"name": acc["name"], "args": acc["args"][:600], "index": idx})
+    if not got:
+        # gateway ignored stream:true and returned a normal body — recover gracefully
+        reply, _u, extra = _agent_chat(gw, provider, model, messages, session_id, timeout)
+        if extra.get("reasoning"):
+            yield ("reasoning", extra["reasoning"])
+        for t in extra.get("tools", []):
+            yield ("tool", t)
+        yield ("token", reply or "")
+    yield ("done", {})
+
+
 def chat_complete(cfg, messages, provider=None, model=None, session_id=None):
     pid, spec, p = resolve_provider(cfg, provider)
     base, key = p["base_url"], p["key"]
@@ -2543,6 +2603,41 @@ class Handler(BaseHTTPRequestHandler):
                              args=(msgs, res, res.get("provider"), res.get("model"), res.get("latency_ms")),
                              daemon=True).start()
             return self._send(200, res)
+        if path == "/api/chat/stream":
+            cfg = load_config()
+            msgs = data.get("messages") or []
+            pid, spec, p = resolve_provider(cfg, data.get("provider"))
+            mdl = data.get("model") or p["model"]
+            gw = _agent_gateway(cfg)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+
+            def emit(ev, payload):
+                self.wfile.write(("data: " + json.dumps({"type": ev, "data": payload}) + "\n\n").encode())
+                self.wfile.flush()
+
+            try:
+                use_gw = gw and not (pid == "local" and p["base_url"].rstrip("/") == gw["base_url"] and not gw.get("key"))
+                if use_gw:
+                    for ev, payload in _agent_chat_stream(gw, pid, mdl, msgs, data.get("session_id")):
+                        emit(ev, payload)
+                else:
+                    res = chat_complete(cfg, msgs, provider=pid, model=mdl, session_id=data.get("session_id"))
+                    if res.get("reasoning"):
+                        emit("reasoning", res["reasoning"])
+                    for t in (res.get("tools") or []):
+                        emit("tool", t)
+                    emit("token", res.get("reply") or ("⚠ " + (res.get("error") or "no response")))
+                    emit("done", {})
+            except Exception as e:
+                try:
+                    emit("error", str(e))
+                except Exception:
+                    pass
+            return
         if path == "/api/followups":
             cfg = load_config()
             res = gen_followups(cfg, data.get("messages") or [], provider=data.get("provider"), model=data.get("model"))
