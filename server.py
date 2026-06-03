@@ -2103,9 +2103,13 @@ def _acp_save_map(m):
 
 
 def _acp_available():
-    """Use ACP for a locally-installed Hermes (standalone). EC2 keeps the gateway."""
-    if os.environ.get("AGENTBAY_PROFILE"):
-        return False
+    """Use ACP for a locally-installed Hermes (standalone desktop). The multi-user
+    EC2 layout (detected via the agentbay-home/profile signal) keeps the gateway."""
+    try:
+        if _gateway_profile():
+            return False
+    except Exception:
+        pass
     return bool(which("hermes"))
 
 
