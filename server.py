@@ -345,13 +345,19 @@ def enabled_models(cfg):
     agent at run time (see _agent_route). Without an agent (EC2), they route
     through the gateway. Either way: only what the user configured shows up."""
     out = []
-    for pid, spec in PROVIDERS.items():
-        p = cfg.get("providers", {}).get(pid, {})
-        if spec["needs_key"] and not p.get("key"):
+    for pid, p in (cfg.get("providers") or {}).items():
+        if not isinstance(p, dict):
             continue
-        for m in p.get("models", []):
-            out.append({"id": pid + "::" + m, "provider": pid, "model": m,
-                        "label": m, "provider_label": spec["label"]})
+        spec = PROVIDERS.get(pid, {})
+        # Agent-imported providers (Nous Portal OAuth, custom endpoints, …) carry no
+        # key here — the agent already holds the creds — so don't skip them.
+        if spec.get("needs_key") and not p.get("key") and not p.get("from_agent"):
+            continue
+        plabel = spec.get("label") or p.get("label") or pid
+        for m in (p.get("models") or []):
+            if m:
+                out.append({"id": pid + "::" + m, "provider": pid, "model": m,
+                            "label": m, "provider_label": plabel})
     return out
 
 
@@ -2211,6 +2217,39 @@ def _hermes_provider_models(ttl=300):
     return data
 
 
+def _import_agent_providers():
+    """Mirror the user's agent (Hermes) providers — Nous Portal (OAuth), custom
+    endpoints, DeepSeek, … — into AgentBay so they NEVER reconfigure what the agent
+    already has. Agent-owned providers are marked `from_agent` and route through the
+    agent with no key (the agent holds the creds). Preserves any key the user set
+    here natively. Returns (updates_dict_for_save_config, imported_ids)."""
+    if not _acp_available():
+        return ({}, [])
+    with _PROV_LOCK:
+        have = bool(_PROV_CACHE["data"])
+    if not have:
+        _refresh_provider_models()            # one-time: fetch synchronously so we have data
+    provs = _hermes_provider_models()
+    cur = (load_config().get("providers") or {})
+    updates, ids = {}, []
+    for prov in provs:
+        pid = prov.get("id")
+        models = [m for m in (prov.get("models") or []) if m]
+        if not pid or not models:
+            continue
+        ex = cur.get(pid, {}) if isinstance(cur.get(pid), dict) else {}
+        if ex.get("key"):                      # user keyed this natively — keep theirs
+            if not (ex.get("models") or []):   # but seed models if they enabled none
+                updates[pid] = {"models": models}; ids.append(pid)
+            continue
+        label = (PROVIDERS.get(pid, {}) or {}).get("label") or prov.get("label") or pid
+        if ex.get("from_agent") and (ex.get("models") or []) == models and ex.get("label") == label:
+            continue                            # already imported & unchanged
+        updates[pid] = {"from_agent": True, "label": label, "models": models}
+        ids.append(pid)
+    return (({"providers": updates} if updates else {}), ids)
+
+
 def _latest_user(messages):
     for m in reversed(messages or []):
         if m.get("role") == "user" and m.get("content"):
@@ -3205,6 +3244,14 @@ class Handler(BaseHTTPRequestHandler):
             if imported:
                 save_config(updates)
             return self._send(200, {"imported": imported})
+        if path == "/api/providers/sync-agent":
+            # Pull EVERY provider the agent (Hermes) has — incl. Nous Portal OAuth &
+            # custom endpoints AgentBay doesn't natively list — so the user never
+            # reconfigures. They appear in the picker and route through the agent.
+            upd, ids = _import_agent_providers()
+            if upd:
+                save_config(upd)
+            return self._send(200, {"imported": ids, "count": len(ids)})
         if path == "/api/extract":
             name = data.get("name") or "file"
             b64 = data.get("b64") or ""
@@ -3506,6 +3553,24 @@ def main():
             return
         create_desktop_launcher()
     threading.Thread(target=_maybe_shortcut, daemon=True).start()
+
+    # Auto-import the user's agent (Hermes) providers ONCE so they never reconfigure
+    # what the agent already has (Nous Portal OAuth, custom endpoints, …). After
+    # this, Settings → Providers has a manual "Sync from agent" to refresh.
+    _seed_flag = CONFIG_DIR / ".agent_providers_imported"
+    if _acp_available() and not _seed_flag.exists():
+        def _seed_providers():
+            try:
+                upd, ids = _import_agent_providers()
+                if upd:
+                    save_config(upd)
+                CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+                _seed_flag.write_text("1")
+                if ids:
+                    print(f"  [providers] imported {len(ids)} from your agent: {', '.join(ids)}")
+            except Exception as e:
+                print(f"  [providers] agent import skipped: {e}")
+        threading.Thread(target=_seed_providers, daemon=True).start()
 
     # Onboarding: make the share-link tool available on every machine (any OS).
     # One-time, in the background, only if missing — so "Remote access" just works.
