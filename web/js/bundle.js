@@ -1718,10 +1718,12 @@ That's a lot of water for a moon smaller than ours.`;
     onFollowup,
     onToast,
     settings,
-    onRegen
+    onRegen,
+    onEdit
   }) {
     const wrapRef = useRef(null);
     const [showJump, setShowJump] = useState(false);
+    const [editing, setEditing] = useState(null); // { idx, text } of the user msg being edited
     const stickRef = useRef(true);
 
     // code copy via delegation
@@ -1778,6 +1780,14 @@ That's a lot of water for a moon smaller than ours.`;
     }, msgs.map((m, i) => {
       const isLast = i === msgs.length - 1;
       if (m.role === "user") {
+        const isEd = editing && editing.idx === i;
+        const saveEdit = () => {
+          const t = editing.text.trim();
+          if (t) {
+            onEdit && onEdit(i, t);
+          }
+          setEditing(null);
+        };
         return /*#__PURE__*/React.createElement("div", {
           className: "turn user anim-fadeup",
           key: i
@@ -1788,9 +1798,47 @@ That's a lot of water for a moon smaller than ours.`;
           src: im.b64,
           alt: im.name || "image",
           loading: "lazy"
-        }))), m.content ? /*#__PURE__*/React.createElement("div", {
+        }))), isEd ? /*#__PURE__*/React.createElement("div", {
+          className: "user-edit"
+        }, /*#__PURE__*/React.createElement("textarea", {
+          className: "field",
+          autoFocus: true,
+          value: editing.text,
+          rows: Math.min(8, (editing.text.match(/\n/g) || []).length + 2),
+          onChange: e => setEditing({
+            idx: i,
+            text: e.target.value
+          }),
+          onKeyDown: e => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              saveEdit();
+            } else if (e.key === "Escape") setEditing(null);
+          }
+        }), /*#__PURE__*/React.createElement("div", {
+          className: "user-edit-bar"
+        }, /*#__PURE__*/React.createElement("button", {
+          className: "btn btn-ghost",
+          onClick: () => setEditing(null)
+        }, "Cancel"), /*#__PURE__*/React.createElement("button", {
+          className: "btn btn-primary",
+          disabled: !editing.text.trim(),
+          onClick: saveEdit
+        }, "Save & resend"))) : m.content ? /*#__PURE__*/React.createElement("div", {
+          className: "user-row"
+        }, !streaming && onEdit && /*#__PURE__*/React.createElement("button", {
+          className: "user-edit-btn",
+          "aria-label": "Edit message",
+          title: "Edit & resend",
+          onClick: () => setEditing({
+            idx: i,
+            text: m.content
+          })
+        }, /*#__PURE__*/React.createElement(I.Pencil, {
+          size: 14
+        })), /*#__PURE__*/React.createElement("div", {
           className: "user-bubble"
-        }, m.content) : null);
+        }, m.content)) : null);
       }
       const isStreamingThis = streaming && isLast;
       const liveMsg = isStreamingThis ? {
@@ -1885,12 +1933,25 @@ That's a lot of water for a moon smaller than ours.`;
     suggestChips,
     onSuggestChip,
     onMic,
-    focusKey
+    focusKey,
+    commands
   }) {
     const taRef = useRef(null);
     const [focused, setFocused] = useState(false);
     const [launching, setLaunching] = useState(false);
     const [drag, setDrag] = useState(false);
+    const [slashSel, setSlashSel] = useState(0);
+
+    // Slash menu: typing "/" + letters (no space yet) filters the command list.
+    const slashQ = commands && commands.length && /^\/[a-z]*$/i.test(value) ? value.slice(1).toLowerCase() : null;
+    const slashList = slashQ != null ? commands.filter(c => c.name.startsWith(slashQ)) : [];
+    useEffect(() => {
+      setSlashSel(0);
+    }, [value]);
+    const runSlash = c => {
+      onChange("");
+      if (c && c.run) c.run();
+    };
     const autosize = () => {
       const t = taRef.current;
       if (!t) return;
@@ -1910,6 +1971,28 @@ That's a lot of water for a moon smaller than ours.`;
       onSend();
     };
     const onKey = e => {
+      if (slashList.length) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setSlashSel(s => (s + 1) % slashList.length);
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setSlashSel(s => (s - 1 + slashList.length) % slashList.length);
+          return;
+        }
+        if (e.key === "Enter" || e.key === "Tab") {
+          e.preventDefault();
+          runSlash(slashList[slashSel] || slashList[0]);
+          return;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          onChange("");
+          return;
+        }
+      }
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         if (streaming) return;
@@ -1957,7 +2040,28 @@ That's a lot of water for a moon smaller than ours.`;
       className: "drop-veil"
     }, /*#__PURE__*/React.createElement(I.Image, {
       size: 22
-    }), /*#__PURE__*/React.createElement("span", null, "Drop images or files to attach")), attachments.length > 0 && /*#__PURE__*/React.createElement("div", {
+    }), /*#__PURE__*/React.createElement("span", null, "Drop images or files to attach")), slashList.length > 0 && /*#__PURE__*/React.createElement("div", {
+      className: "slash-menu"
+    }, slashList.map((c, i) => {
+      const Ic = I[c.icon] || I.Command;
+      return /*#__PURE__*/React.createElement("button", {
+        key: c.name,
+        className: "slash-item" + (i === slashSel ? " sel" : ""),
+        onMouseEnter: () => setSlashSel(i),
+        onMouseDown: e => {
+          e.preventDefault();
+          runSlash(c);
+        }
+      }, /*#__PURE__*/React.createElement("span", {
+        className: "slash-ic"
+      }, /*#__PURE__*/React.createElement(Ic, {
+        size: 15
+      })), /*#__PURE__*/React.createElement("span", {
+        className: "slash-name"
+      }, "/", c.name), /*#__PURE__*/React.createElement("span", {
+        className: "slash-desc"
+      }, c.desc));
+    })), attachments.length > 0 && /*#__PURE__*/React.createElement("div", {
       className: "attach-chips"
     }, attachments.map((a, i) => /*#__PURE__*/React.createElement("div", {
       className: "chip" + (a.kind === "image" ? " img" : ""),
@@ -8230,6 +8334,24 @@ Object.assign(window, {
       } : s));
       setTimeout(() => startStream(sessionId, prompt, sess.model), 60);
     };
+
+    // Edit a prior user message: replace its text, drop everything after it, re-run.
+    const editMessage = (sessionId, idx, text) => {
+      if (streaming) stopStream();
+      const sess = (sessionsRef.current || []).find(s => s.id === sessionId);
+      if (!sess || !sess.messages[idx] || sess.messages[idx].role !== "user") return;
+      const msgs = sess.messages.slice(0, idx + 1);
+      msgs[idx] = {
+        ...msgs[idx],
+        content: text
+      };
+      setSessions(ss => ss.map(s => s.id === sessionId ? {
+        ...s,
+        messages: msgs,
+        updated: Date.now()
+      } : s));
+      setTimeout(() => startStream(sessionId, text, sess.model), 80);
+    };
     const newChat = () => {
       if (streaming) stopStream();
       setActiveId(null);
@@ -8356,6 +8478,42 @@ Object.assign(window, {
       });
     };
     const attachFile = () => fileInputRef.current && fileInputRef.current.click();
+    // Slash commands — typing "/" at the start of the composer opens this menu.
+    const slashCommands = [{
+      name: "new",
+      desc: "Start a new chat",
+      icon: "Plus",
+      run: () => newChat()
+    }, {
+      name: "model",
+      desc: "Switch model",
+      icon: "Bot",
+      run: () => setPop({
+        kind: "model",
+        anchor: headModelRef.current ? headModelRef : topModelRef
+      })
+    }, {
+      name: "search",
+      desc: "Search chats & messages",
+      icon: "Search",
+      run: () => setModal({
+        kind: "search"
+      })
+    }, {
+      name: "settings",
+      desc: "Open settings",
+      icon: "Settings",
+      run: () => setModal({
+        kind: "settings"
+      })
+    }, {
+      name: "shortcuts",
+      desc: "Keyboard shortcuts",
+      icon: "Keyboard",
+      run: () => setModal({
+        kind: "shortcuts"
+      })
+    }];
     const composerProps = {
       value: draft,
       onChange: setDraft,
@@ -8367,6 +8525,7 @@ Object.assign(window, {
       onFiles: onFilesPicked,
       onRemoveAttach: i => setAttachments(x => x.filter((_, j) => j !== i)),
       focusKey,
+      commands: slashCommands,
       placeholder: active ? "Reply to Hermes…" : "Message Hermes…"
     };
 
@@ -8690,7 +8849,8 @@ Object.assign(window, {
       onFollowup: q => send(q),
       onToast: toast,
       settings: settings,
-      onRegen: () => regenerate(active.id)
+      onRegen: () => regenerate(active.id),
+      onEdit: (idx, text) => editMessage(active.id, idx, text)
     }), /*#__PURE__*/React.createElement(Composer, composerProps))), /*#__PURE__*/React.createElement("input", {
       ref: fileInputRef,
       type: "file",

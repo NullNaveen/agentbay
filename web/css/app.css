@@ -310,6 +310,13 @@ body.no-anim *::after {
 
 .turn { margin: 4px 0 22px; }
 .turn.user { display: flex; flex-direction: column; align-items: flex-end; }
+.turn.user .user-row { display: flex; align-items: center; gap: 6px; max-width: 100%; }
+.user-edit-btn { opacity: 0; flex: 0 0 auto; color: var(--text-3); padding: 5px; border-radius: 7px; transition: opacity .12s, background .12s; }
+.turn.user:hover .user-edit-btn { opacity: 1; }
+.user-edit-btn:hover { background: var(--hover); color: var(--text-1); }
+.user-edit { width: min(560px, 92%); display: flex; flex-direction: column; gap: 8px; }
+.user-edit textarea { width: 100%; resize: vertical; line-height: 1.5; }
+.user-edit-bar { display: flex; justify-content: flex-end; gap: 8px; }
 .user-images { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-bottom: 6px; max-width: 78%; }
 .user-images img { max-width: 240px; max-height: 240px; border-radius: 14px; object-fit: cover; border: 1px solid var(--border); display: block; }
 .user-bubble {
@@ -443,6 +450,12 @@ body.no-anim *::after {
 .composer.drag { border-color: var(--accent); border-style: dashed; box-shadow: 0 0 0 4px var(--accent-ring), var(--shadow-md); }
 .composer .drop-veil { position: absolute; inset: 0; z-index: 5; border-radius: var(--r-xl); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px;
   background: color-mix(in srgb, var(--field-bg) 86%, transparent); color: var(--accent-deep); font-size: 13.5px; font-weight: 600; pointer-events: none; backdrop-filter: blur(1px); }
+.composer .slash-menu { position: absolute; bottom: calc(100% + 8px); left: 0; right: 0; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 13px; box-shadow: var(--shadow-lg); padding: 6px; z-index: 7; max-height: 300px; overflow: auto; animation: popIn .14s var(--ease-spring) both; }
+.slash-item { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 8px 10px; border-radius: 9px; transition: background .1s; }
+.slash-item.sel, .slash-item:hover { background: var(--hover); }
+.slash-item .slash-ic { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-deep); flex: 0 0 auto; }
+.slash-item .slash-name { font-weight: 650; font-size: 13.5px; }
+.slash-item .slash-desc { font-size: 12.5px; color: var(--text-3); margin-left: auto; }
 
 .attach-chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 6px 6px 2px; }
 .chip {

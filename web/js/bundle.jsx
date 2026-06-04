@@ -880,9 +880,10 @@ That's a lot of water for a moon smaller than ours.`;
   }
 
   /* ---------- Thread ---------- */
-  function Thread({ session, streaming, onFollowup, onToast, settings, onRegen }) {
+  function Thread({ session, streaming, onFollowup, onToast, settings, onRegen, onEdit }) {
     const wrapRef = useRef(null);
     const [showJump, setShowJump] = useState(false);
+    const [editing, setEditing] = useState(null);   // { idx, text } of the user msg being edited
     const stickRef = useRef(true);
 
     // code copy via delegation
@@ -925,11 +926,28 @@ That's a lot of water for a moon smaller than ours.`;
           {msgs.map((m, i) => {
             const isLast = i === msgs.length - 1;
             if (m.role === "user") {
+              const isEd = editing && editing.idx === i;
+              const saveEdit = () => { const t = editing.text.trim(); if (t) { onEdit && onEdit(i, t); } setEditing(null); };
               return <div className="turn user anim-fadeup" key={i}>
                 {m.images && m.images.length > 0 && (
                   <div className="user-images">{m.images.map((im, k) => <img key={k} src={im.b64} alt={im.name || "image"} loading="lazy" />)}</div>
                 )}
-                {m.content ? <div className="user-bubble">{m.content}</div> : null}
+                {isEd ? (
+                  <div className="user-edit">
+                    <textarea className="field" autoFocus value={editing.text} rows={Math.min(8, (editing.text.match(/\n/g) || []).length + 2)}
+                      onChange={(e) => setEditing({ idx: i, text: e.target.value })}
+                      onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveEdit(); } else if (e.key === "Escape") setEditing(null); }} />
+                    <div className="user-edit-bar">
+                      <button className="btn btn-ghost" onClick={() => setEditing(null)}>Cancel</button>
+                      <button className="btn btn-primary" disabled={!editing.text.trim()} onClick={saveEdit}>Save &amp; resend</button>
+                    </div>
+                  </div>
+                ) : (m.content ? (
+                  <div className="user-row">
+                    {!streaming && onEdit && <button className="user-edit-btn" aria-label="Edit message" title="Edit & resend" onClick={() => setEditing({ idx: i, text: m.content })}><I.Pencil size={14} /></button>}
+                    <div className="user-bubble">{m.content}</div>
+                  </div>
+                ) : null)}
               </div>;
             }
             const isStreamingThis = streaming && isLast;
@@ -974,11 +992,18 @@ That's a lot of water for a moon smaller than ours.`;
 
   /* ---------- Composer ---------- */
   function Composer({ value, onChange, onSend, onStop, streaming, attachments, onAttach, onRemoveAttach, onFiles,
-    placeholder, suggestChips, onSuggestChip, onMic, focusKey }) {
+    placeholder, suggestChips, onSuggestChip, onMic, focusKey, commands }) {
     const taRef = useRef(null);
     const [focused, setFocused] = useState(false);
     const [launching, setLaunching] = useState(false);
     const [drag, setDrag] = useState(false);
+    const [slashSel, setSlashSel] = useState(0);
+
+    // Slash menu: typing "/" + letters (no space yet) filters the command list.
+    const slashQ = (commands && commands.length && /^\/[a-z]*$/i.test(value)) ? value.slice(1).toLowerCase() : null;
+    const slashList = slashQ != null ? commands.filter((c) => c.name.startsWith(slashQ)) : [];
+    useEffect(() => { setSlashSel(0); }, [value]);
+    const runSlash = (c) => { onChange(""); if (c && c.run) c.run(); };
 
     const autosize = () => { const t = taRef.current; if (!t) return; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 220) + "px"; };
     useEffect(autosize, [value]);
@@ -990,6 +1015,12 @@ That's a lot of water for a moon smaller than ours.`;
       onSend();
     };
     const onKey = (e) => {
+      if (slashList.length) {
+        if (e.key === "ArrowDown") { e.preventDefault(); setSlashSel((s) => (s + 1) % slashList.length); return; }
+        if (e.key === "ArrowUp") { e.preventDefault(); setSlashSel((s) => (s - 1 + slashList.length) % slashList.length); return; }
+        if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); runSlash(slashList[slashSel] || slashList[0]); return; }
+        if (e.key === "Escape") { e.preventDefault(); onChange(""); return; }
+      }
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (streaming) return; doSend(); }
     };
     // Paste an image (screenshot / copied picture) straight into the chat. Only
@@ -1019,6 +1050,21 @@ That's a lot of water for a moon smaller than ours.`;
           <div className={"composer" + (focused ? " focused" : "") + (drag ? " drag" : "")}
             onDrop={onDrop} onDragOver={onDragOver} onDragLeave={onDragLeave}>
             {drag && <div className="drop-veil"><I.Image size={22} /><span>Drop images or files to attach</span></div>}
+            {slashList.length > 0 && (
+              <div className="slash-menu">
+                {slashList.map((c, i) => {
+                  const Ic = I[c.icon] || I.Command;
+                  return (
+                    <button key={c.name} className={"slash-item" + (i === slashSel ? " sel" : "")}
+                      onMouseEnter={() => setSlashSel(i)} onMouseDown={(e) => { e.preventDefault(); runSlash(c); }}>
+                      <span className="slash-ic"><Ic size={15} /></span>
+                      <span className="slash-name">/{c.name}</span>
+                      <span className="slash-desc">{c.desc}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
             {attachments.length > 0 && (
               <div className="attach-chips">
                 {attachments.map((a, i) => (
@@ -3872,6 +3918,17 @@ Object.assign(window, {
       setTimeout(() => startStream(sessionId, prompt, sess.model), 60);
     };
 
+    // Edit a prior user message: replace its text, drop everything after it, re-run.
+    const editMessage = (sessionId, idx, text) => {
+      if (streaming) stopStream();
+      const sess = (sessionsRef.current || []).find((s) => s.id === sessionId);
+      if (!sess || !sess.messages[idx] || sess.messages[idx].role !== "user") return;
+      const msgs = sess.messages.slice(0, idx + 1);
+      msgs[idx] = { ...msgs[idx], content: text };
+      setSessions((ss) => ss.map((s) => s.id === sessionId ? { ...s, messages: msgs, updated: Date.now() } : s));
+      setTimeout(() => startStream(sessionId, text, sess.model), 80);
+    };
+
     const newChat = () => {
       if (streaming) stopStream();
       setActiveId(null); setDraft(""); setAttachments([]); setHomeModel(defaultModel);
@@ -3926,10 +3983,18 @@ Object.assign(window, {
       });
     };
     const attachFile = () => fileInputRef.current && fileInputRef.current.click();
+    // Slash commands — typing "/" at the start of the composer opens this menu.
+    const slashCommands = [
+      { name: "new", desc: "Start a new chat", icon: "Plus", run: () => newChat() },
+      { name: "model", desc: "Switch model", icon: "Bot", run: () => setPop({ kind: "model", anchor: (headModelRef.current ? headModelRef : topModelRef) }) },
+      { name: "search", desc: "Search chats & messages", icon: "Search", run: () => setModal({ kind: "search" }) },
+      { name: "settings", desc: "Open settings", icon: "Settings", run: () => setModal({ kind: "settings" }) },
+      { name: "shortcuts", desc: "Keyboard shortcuts", icon: "Keyboard", run: () => setModal({ kind: "shortcuts" }) },
+    ];
     const composerProps = {
       value: draft, onChange: setDraft, onSend: () => send(), onStop: stopStream, streaming: !!streaming,
       attachments, onAttach: attachFile, onFiles: onFilesPicked, onRemoveAttach: (i) => setAttachments((x) => x.filter((_, j) => j !== i)),
-      focusKey,
+      focusKey, commands: slashCommands,
       placeholder: active ? "Reply to Hermes…" : "Message Hermes…",
     };
 
@@ -4052,7 +4117,7 @@ Object.assign(window, {
             <React.Fragment>
               <Thread session={active} streaming={streaming && streaming.sessionId === active.id ? streaming : null}
                 onFollowup={(q) => send(q)} onToast={toast} settings={settings}
-                onRegen={() => regenerate(active.id)} />
+                onRegen={() => regenerate(active.id)} onEdit={(idx, text) => editMessage(active.id, idx, text)} />
               <Composer {...composerProps} />
             </React.Fragment>
           )}
