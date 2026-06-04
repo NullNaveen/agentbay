@@ -1104,9 +1104,12 @@ def _extra_bin_dirs():
             dirs += [str(p) for p in base.glob("*/*/.hermes/hermes-agent/venv/bin")]
         except Exception:
             pass
-    # node version managers (nvm / fnm) install global CLIs under per-version bins
+    # node version managers (nvm / fnm) install global CLIs under per-version bins.
+    # fnm's data dir varies: ~/.fnm, ~/.local/share/fnm (Linux XDG), and on macOS
+    # ~/Library/Application Support/fnm — cover all so npm globals (OpenClaw) resolve.
     for base in [home / ".nvm/versions/node", home / ".local/share/fnm/node-versions",
-                 home / ".fnm/node-versions"]:
+                 home / ".fnm/node-versions",
+                 home / "Library/Application Support/fnm/node-versions"]:
         try:
             dirs += [str(d) for d in base.glob("*/bin")]
             dirs += [str(d) for d in base.glob("*/installation/bin")]
@@ -1132,6 +1135,15 @@ def _extra_bin_dirs():
     except Exception:
         pass
     return dirs
+
+
+def _agent_env(base=None):
+    """An env whose PATH includes all the agent/tool install dirs — so a node-based
+    CLI like `openclaw` (shebang `#!/usr/bin/env node`) finds `node`, etc."""
+    env = dict(base if base is not None else os.environ)
+    extra = os.pathsep.join(d for d in _extra_bin_dirs() if d)
+    env["PATH"] = extra + os.pathsep + env.get("PATH", "")
+    return env
 
 
 def which(binname):
@@ -2135,6 +2147,50 @@ def _acp_available():
     return bool(which("hermes"))
 
 
+def _agent_kind(cfg=None):
+    """Which local agent backs chat: 'hermes' (driven via ACP) or 'openclaw' (driven
+    via the openclaw CLI). None on multi-user EC2 (gateway) or when neither is
+    installed. Honors cfg['agent'] if the user picked one; else auto (Hermes first)."""
+    if _is_multiuser_ec2():
+        return None
+    pref = ((cfg or {}).get("agent") or "").lower() if cfg is not None else ""
+    has_h, has_o = bool(which("hermes")), bool(which("openclaw"))
+    if pref == "openclaw" and has_o:
+        return "openclaw"
+    if pref == "hermes" and has_h:
+        return "hermes"
+    if has_h:
+        return "hermes"
+    if has_o:
+        return "openclaw"
+    return None
+
+
+def _openclaw_provider_models():
+    """The user's OpenClaw providers+models via `openclaw models list --json`.
+    Keys are `provider/model` (model may contain more slashes)."""
+    oc = which("openclaw")
+    if not oc:
+        return []
+    try:
+        r = subprocess.run([oc, "models", "list", "--json"], capture_output=True,
+                           text=True, timeout=30, errors="replace", env=_agent_env())
+        d = json.loads(r.stdout or "{}")
+    except Exception:
+        return []
+    groups, order = {}, []
+    for m in (d.get("models") or []):
+        key = (m.get("key") or "")
+        if "/" not in key:
+            continue
+        prov, model = key.split("/", 1)
+        if prov not in groups:
+            groups[prov] = []; order.append(prov)
+        if model not in groups[prov]:
+            groups[prov].append(model)
+    return [{"id": p, "label": p[:1].upper() + p[1:], "models": groups[p]} for p in order]
+
+
 def _hermes_python():
     """The Python inside Hermes's venv (so we can import hermes_cli). The `hermes`
     binary lives in venv/bin (Unix) or venv/Scripts (Windows); python is a sibling."""
@@ -2218,18 +2274,22 @@ def _hermes_provider_models(ttl=300):
 
 
 def _import_agent_providers():
-    """Mirror the user's agent (Hermes) providers — Nous Portal (OAuth), custom
-    endpoints, DeepSeek, … — into AgentBay so they NEVER reconfigure what the agent
-    already has. Agent-owned providers are marked `from_agent` and route through the
-    agent with no key (the agent holds the creds). Preserves any key the user set
-    here natively. Returns (updates_dict_for_save_config, imported_ids)."""
-    if not _acp_available():
+    """Mirror the user's agent providers — Hermes (Nous Portal OAuth, custom
+    endpoints, DeepSeek, …) or OpenClaw (ollama, openrouter, …) — into AgentBay so
+    they NEVER reconfigure what the agent already has. Agent-owned providers are
+    marked `from_agent` and route through the agent with no key (the agent holds the
+    creds). Preserves any key the user set here natively. Returns (updates, ids)."""
+    kind = _agent_kind(load_config())
+    if kind == "openclaw":
+        provs = _openclaw_provider_models()
+    elif kind == "hermes":
+        with _PROV_LOCK:
+            have = bool(_PROV_CACHE["data"])
+        if not have:
+            _refresh_provider_models()        # one-time: fetch synchronously so we have data
+        provs = _hermes_provider_models()
+    else:
         return ({}, [])
-    with _PROV_LOCK:
-        have = bool(_PROV_CACHE["data"])
-    if not have:
-        _refresh_provider_models()            # one-time: fetch synchronously so we have data
-    provs = _hermes_provider_models()
     cur = (load_config().get("providers") or {})
     updates, ids = {}, []
     for prov in provs:
@@ -2524,12 +2584,55 @@ def _hermes_chat_fallback(messages, session_id=None, model_id=None, images=None,
     yield ("done", {})
 
 
-def local_agent_stream(messages, session_id=None, model_id=None, images=None, env=None):
-    """Run the on-device agent. Prefer ACP (streams reply+thinking+tools); if ACP
-    can't start (no output / handshake fail — common on Windows when the acp extra
-    isn't installed), fall back to the reliable `hermes chat -q` path. The picked
-    model (`provider:model`) is the agent's brain via set_model / --provider+--model,
-    and `env` carries the provider's saved API key to the agent process."""
+def _openclaw_chat(messages, session_id=None, model=None, images=None):
+    """Run ONE OpenClaw agent turn via `openclaw agent --json` (tool-enabled, the
+    OpenClaw analog of Hermes ACP). Non-streaming — returns the final reply. Sessions
+    persist via --session-key. model is OpenClaw's `provider/model` key."""
+    oc = which("openclaw")
+    user_text = _latest_user(messages)
+    if not oc or not user_text:
+        yield ("token", "⚠ the on-device agent isn't available.")
+        yield ("done", {})
+        return
+    cmd = [oc, "agent", "--agent", "main", "-m", user_text, "--json", "--timeout", "600"]
+    if model:
+        cmd += ["--model", model]
+    if session_id:
+        cmd += ["--session-key", "agentbay:" + str(session_id)]
+    for pth in (_attachment_paths(images) or []):
+        cmd += ["--file", pth]
+    env = _agent_env(); env["PYTHONUTF8"] = "1"; env["PYTHONIOENCODING"] = "utf-8"
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=620, env=env,
+                           errors="replace", cwd=str(Path.home()))
+    except Exception as e:
+        yield ("token", "⚠ agent error: %s" % e)
+        yield ("done", {})
+        return
+    reply = ""
+    try:
+        d = json.loads(r.stdout or "{}")
+        payloads = ((d.get("result") or {}).get("payloads")) or []
+        reply = " ".join(p.get("text", "") for p in payloads if isinstance(p, dict)).strip()
+    except Exception:
+        reply = (r.stdout or "").strip()
+    reply = _ANSI_RE.sub("", reply).strip()
+    if not reply:
+        reply = "⚠ the agent returned nothing." + ((" " + (r.stderr or "")[:200]) if r.stderr else "")
+    yield ("token", reply)
+    yield ("done", {})
+
+
+def local_agent_stream(messages, session_id=None, model_id=None, images=None, env=None, kind="hermes"):
+    """Run the on-device agent. OpenClaw → `openclaw agent --json`. Hermes → ACP
+    (streams reply+thinking+tools); if ACP can't start (no output / handshake fail —
+    common on Windows when the acp extra isn't installed), fall back to the reliable
+    `hermes chat -q` path. The picked model is the agent's brain (set_model /
+    --provider+--model / openclaw --model); `env` carries the provider's saved key."""
+    if kind == "openclaw":
+        for ev, payload in _openclaw_chat(messages, session_id, model_id, images):
+            yield ev, payload
+        return
     emitted = 0
     failed = None
     for ev, payload in acp_stream_turn(messages, session_id, model_id=model_id, images=images, env=env):
@@ -2560,22 +2663,26 @@ _HERMES_PROVIDER = {"local": "ollama"}
 
 def _agent_route(cfg, data):
     """Decide whether a chat request runs through the on-device agent, and with what.
-    When a local Hermes agent is available, EVERY model the user picked from
-    Settings → Providers runs through it (tools + terminal), using that provider+
-    model as its brain — the saved API key is handed to the agent via env so it can
-    actually call that provider. Returns (is_agent, model_id, images, env)."""
-    if not (_acp_available() and cfg.get("agent_mode") is not False):
-        return (False, None, None, None)
+    Every model the user picked runs through the agent (tools), using that provider+
+    model as its brain; the saved key is handed to the agent via env. Returns
+    (is_agent, model_id, images, env, kind) — kind is 'hermes' or 'openclaw'."""
+    kind = _agent_kind(cfg)
+    if not kind or cfg.get("agent_mode") is False:
+        return (False, None, None, None, None)
     pid = (data.get("provider") or "").lower()
     mdl = data.get("model") or ""
     if not pid or not mdl:
-        return (False, None, None, None)
+        return (False, None, None, None, None)
     images = data.get("images") or []
+    if kind == "openclaw":
+        # OpenClaw keys are `provider/model` (model may contain extra slashes).
+        return (True, pid + "/" + mdl, images, {}, "openclaw")
+    # ---- Hermes ----
     # Legacy: a session saved as provider "agent"/"local"+"hermes-agent" → use the
     # agent's own configured default (model already in `provider:model` form, or none).
     if pid == "agent" or mdl == "hermes-agent":
         model_id = None if mdl in ("default", "hermes-agent", "") else mdl
-        return (True, model_id, images, {})
+        return (True, model_id, images, {}, "hermes")
     hp = _HERMES_PROVIDER.get(pid, pid)
     model_id = hp + ":" + mdl
     env = {}
@@ -2587,7 +2694,7 @@ def _agent_route(cfg, data):
         host = re.sub(r"/v1/?$", "", p["base_url"].rstrip("/"))
         if host:
             env["OLLAMA_HOST"] = host
-    return (True, model_id, images, env)
+    return (True, model_id, images, env, "hermes")
 
 
 def _acp_probe(hb, timeout=15):
@@ -3269,11 +3376,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/chat":
             cfg = load_config()
             msgs = data.get("messages") or []
-            is_agent, model_id, images, env = _agent_route(cfg, data)
+            is_agent, model_id, images, env, kind = _agent_route(cfg, data)
             if is_agent:
                 reply, reasoning, tools = "", "", []
                 t0 = time.time()
-                for ev, payload in local_agent_stream(msgs, data.get("session_id"), model_id, images, env):
+                for ev, payload in local_agent_stream(msgs, data.get("session_id"), model_id, images, env, kind):
                     if ev == "token":
                         reply += payload
                     elif ev == "reasoning":
@@ -3308,11 +3415,11 @@ class Handler(BaseHTTPRequestHandler):
 
             try:
                 use_gw = gw and not (pid == "local" and p["base_url"].rstrip("/") == gw["base_url"] and not gw.get("key"))
-                is_agent, model_id, images, env = _agent_route(cfg, data)
+                is_agent, model_id, images, env, kind = _agent_route(cfg, data)
                 if is_agent:
                     # the real on-device agent (tools, terminal) — no gateway needed,
                     # using the picked provider+model (with its saved key) as its brain
-                    for ev, payload in local_agent_stream(msgs, data.get("session_id"), model_id, images, env):
+                    for ev, payload in local_agent_stream(msgs, data.get("session_id"), model_id, images, env, kind):
                         emit(ev, payload)
                 elif use_gw:
                     for ev, payload in _agent_chat_stream(gw, pid, mdl, msgs, data.get("session_id")):
@@ -3558,7 +3665,7 @@ def main():
     # what the agent already has (Nous Portal OAuth, custom endpoints, …). After
     # this, Settings → Providers has a manual "Sync from agent" to refresh.
     _seed_flag = CONFIG_DIR / ".agent_providers_imported"
-    if _acp_available() and not _seed_flag.exists():
+    if _agent_kind(load_config()) and not _seed_flag.exists():
         def _seed_providers():
             try:
                 upd, ids = _import_agent_providers()
