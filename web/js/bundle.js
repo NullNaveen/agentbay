@@ -5389,6 +5389,7 @@ That's a lot of water for a moon smaller than ours.`;
   }
 
   /* ---------- model dropdown ---------- */
+  const MM_CAP = 20; // models shown per provider before "search to see the rest" (huge catalogs stay usable)
   function ModelMenu({
     anchorRef,
     current,
@@ -5472,7 +5473,7 @@ That's a lot of water for a moon smaller than ours.`;
         size: 15
       }) : /*#__PURE__*/React.createElement(I.ChevronRight, {
         size: 15
-      }))), exp && items.map(m => {
+      }))), exp && (ql ? items : items.slice(0, MM_CAP)).map(m => {
         const Ic = I[m.icon] || I.Bot;
         return /*#__PURE__*/React.createElement("button", {
           key: m.id,
@@ -5499,7 +5500,9 @@ That's a lot of water for a moon smaller than ours.`;
         }, /*#__PURE__*/React.createElement(I.Check, {
           size: 17
         })));
-      }));
+      }), exp && !ql && items.length > MM_CAP && /*#__PURE__*/React.createElement("div", {
+        className: "mm-more"
+      }, "+", items.length - MM_CAP, " more \u2014 type above to search them"));
     })), /*#__PURE__*/React.createElement("div", {
       className: "pop-divider"
     }), /*#__PURE__*/React.createElement("button", {

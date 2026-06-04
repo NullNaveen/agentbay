@@ -2331,6 +2331,7 @@ That's a lot of water for a moon smaller than ours.`;
   }
 
   /* ---------- model dropdown ---------- */
+  const MM_CAP = 20;   // models shown per provider before "search to see the rest" (huge catalogs stay usable)
   function ModelMenu({ anchorRef, current, defaultModel, onClose, onPick, onSetDefault }) {
     const [q, setQ] = React.useState("");
     const all = D.MODELS;
@@ -2367,7 +2368,7 @@ That's a lot of water for a moon smaller than ours.`;
                   <span className="mm-head-count">{items.length}</span>
                   <span className="mm-head-chev">{exp ? <I.ChevronDown size={15} /> : <I.ChevronRight size={15} />}</span>
                 </button>
-                {exp && items.map((m) => {
+                {exp && (ql ? items : items.slice(0, MM_CAP)).map((m) => {
                   const Ic = I[m.icon] || I.Bot;
                   return (
                     <button key={m.id} className={"model-opt" + (m.id === current ? " sel" : "")} onClick={() => { onClose(); onPick(m.id); }}>
@@ -2379,6 +2380,9 @@ That's a lot of water for a moon smaller than ours.`;
                     </button>
                   );
                 })}
+                {exp && !ql && items.length > MM_CAP && (
+                  <div className="mm-more">+{items.length - MM_CAP} more — type above to search them</div>
+                )}
               </div>
             );
           })}
