@@ -317,6 +317,8 @@ body.no-anim *::after {
 .user-edit { width: min(560px, 92%); display: flex; flex-direction: column; gap: 8px; }
 .user-edit textarea { width: 100%; resize: vertical; line-height: 1.5; }
 .user-edit-bar { display: flex; justify-content: flex-end; gap: 8px; }
+.err-retry { margin-top: 8px; }
+.err-retry .btn { font-size: 13px; }
 .user-images { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-bottom: 6px; max-width: 78%; }
 .user-images img { max-width: 240px; max-height: 240px; border-radius: 14px; object-fit: cover; border: 1px solid var(--border); display: block; }
 .user-bubble {

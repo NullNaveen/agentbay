@@ -814,11 +814,12 @@ That's a lot of water for a moon smaller than ours.`;
 
   // Post-render enhancement: syntax-highlight code + typeset math. Runs after the
   // markdown HTML is in the DOM; retries briefly while the CDN libs finish loading.
-  function enhanceRich(el) {
+  function enhanceRich(el, opts) {
     if (!el || !el.isConnected) return;
+    const o = opts || {};
     let ready = true;
     try {
-      if (window.hljs) {
+      if (o.code !== false && window.hljs) {
         el.querySelectorAll("pre code").forEach(b => {
           if (!b.dataset.hl) {
             try {
@@ -832,7 +833,7 @@ That's a lot of water for a moon smaller than ours.`;
       }
     } catch (e) {}
     try {
-      if (window.renderMathInElement) {
+      if (o.latex !== false && window.renderMathInElement) {
         window.renderMathInElement(el, {
           delimiters: [{
             left: "$$",
@@ -1495,7 +1496,9 @@ That's a lot of water for a moon smaller than ours.`;
   const I = window.Icons;
   const D = window.HermesData;
   function modelMeta(id) {
-    return D.MODELS.find(m => m.id === id) || D.MODELS[0] || {
+    // Don't fall back to MODELS[0] for an unknown/stale id — that would show the
+    // WRONG model's name. Derive the name from the id itself instead.
+    return D.MODELS.find(m => m.id === id) || {
       id: id || "",
       name: id ? String(id).split("::").pop() : "No model — add one in Settings",
       icon: "Bot",
@@ -1592,16 +1595,24 @@ That's a lot of water for a moon smaller than ours.`;
     showTimestamps,
     showThinking,
     showTools,
-    onRegen
+    onRegen,
+    onRetry,
+    avatars,
+    latex,
+    codeBlocks
   }) {
     const meta = modelMeta(msg.model);
     const Ic = I[meta.icon] || I.Bot;
     const [vote, setVote] = useState(0);
     const [listening, setListening] = useState(false);
     const mdRef = useRef(null);
-    // syntax-highlight code + typeset math once the reply has settled
+    const isErr = !streaming && typeof msg.content === "string" && msg.content.trim().startsWith("⚠");
+    // syntax-highlight code + typeset math once the reply has settled (respect the Settings toggles)
     useEffect(() => {
-      if (!streaming && mdRef.current) D.enhanceRich(mdRef.current);
+      if (!streaming && mdRef.current) D.enhanceRich(mdRef.current, {
+        code: codeBlocks !== false,
+        latex: latex !== false
+      });
     }, [msg.content, streaming]);
     const copy = () => {
       navigator.clipboard && navigator.clipboard.writeText(msg.content);
@@ -1633,7 +1644,7 @@ That's a lot of water for a moon smaller than ours.`;
       className: "turn assistant anim-fadeup"
     }, /*#__PURE__*/React.createElement("div", {
       className: "assistant-head"
-    }, /*#__PURE__*/React.createElement("span", {
+    }, avatars !== false && /*#__PURE__*/React.createElement("span", {
       className: "am-icon"
     }, /*#__PURE__*/React.createElement(window.HermesGlyph, {
       size: 17,
@@ -1671,7 +1682,14 @@ That's a lot of water for a moon smaller than ours.`;
       dangerouslySetInnerHTML: {
         __html: D.renderMarkdown(msg.content)
       }
-    }), streaming && msg.content ? /*#__PURE__*/React.createElement("span", {
+    }), isErr && onRegen && /*#__PURE__*/React.createElement("div", {
+      className: "err-retry"
+    }, /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-outline",
+      onClick: onRegen
+    }, /*#__PURE__*/React.createElement(I.Refresh, {
+      size: 14
+    }), " Retry")), streaming && msg.content ? /*#__PURE__*/React.createElement("span", {
       className: "typing",
       style: {
         marginTop: 4
@@ -1761,7 +1779,7 @@ That's a lot of water for a moon smaller than ours.`;
       scrollToBottom(false);
     }, [session && session.id]);
     useEffect(() => {
-      if (stickRef.current) scrollToBottom(true);
+      if (settings.autoScroll !== false && stickRef.current) scrollToBottom(true);
     }, [session && session.messages.length, streaming && streaming.text]);
     const onScroll = () => {
       const el = wrapRef.current;
@@ -1857,7 +1875,10 @@ That's a lot of water for a moon smaller than ours.`;
         showTimestamps: settings.timestamps,
         showThinking: settings.showThinking,
         showTools: settings.showTools,
-        onRegen: onRegen
+        onRegen: onRegen,
+        avatars: settings.avatars,
+        latex: settings.latex,
+        codeBlocks: settings.codeBlocks
       });
     })), showJump && /*#__PURE__*/React.createElement("button", {
       className: "jump-latest",
@@ -3321,11 +3342,13 @@ That's a lot of water for a moon smaller than ours.`;
 
   // ---- WhatsApp QR pairing, rendered live in the UI (reads the gateway bridge) ----
   function WhatsAppPair({
-    connected
+    connected,
+    pairCmd
   }) {
     const [st, setSt] = React.useState({
       state: "waiting"
     });
+    const [secs, setSecs] = React.useState(0);
     React.useEffect(() => {
       let alive = true;
       const tick = () => fetch("/api/integrations/whatsapp/qr").then(r => r.json()).then(d => {
@@ -3333,20 +3356,30 @@ That's a lot of water for a moon smaller than ours.`;
       }).catch(() => {});
       tick();
       const id = setInterval(tick, 2500);
+      const sid = setInterval(() => alive && setSecs(s => s + 1), 1000);
       return () => {
         alive = false;
         clearInterval(id);
+        clearInterval(sid);
       };
     }, []);
-    if (!connected && st.state === "off") {
-      return /*#__PURE__*/React.createElement("div", {
-        style: {
-          fontSize: 13,
-          color: "var(--text-3)",
-          margin: "10px 0"
-        }
-      }, "Press ", /*#__PURE__*/React.createElement("b", null, "Connect"), " below to start WhatsApp, then a QR code will appear here to scan.");
-    }
+    const cmd = pairCmd || "hermes whatsapp";
+    // The in-app QR only appears if the gateway emits one; WhatsApp pairing usually
+    // needs an interactive terminal, so always offer the terminal command as the path.
+    const TermHint = () => /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12.5,
+        color: "var(--text-3)",
+        marginTop: 10,
+        lineHeight: 1.5
+      }
+    }, "No QR? WhatsApp pairing needs an interactive terminal \u2014 open one and run", " ", /*#__PURE__*/React.createElement("code", {
+      style: {
+        background: "var(--code-bg)",
+        padding: "1px 6px",
+        borderRadius: 6
+      }
+    }, cmd), ", scan the QR there. This card flips to ", /*#__PURE__*/React.createElement("b", null, "Linked"), " automatically once you're paired.");
     if (st.state === "paired") {
       return /*#__PURE__*/React.createElement("div", {
         style: {
@@ -3360,6 +3393,15 @@ That's a lot of water for a moon smaller than ours.`;
       }, /*#__PURE__*/React.createElement(I.CheckCircle, {
         size: 18
       }), " WhatsApp linked \u2014 you can message the agent now.");
+    }
+    if (st.state === "off") {
+      return /*#__PURE__*/React.createElement("div", {
+        style: {
+          fontSize: 13,
+          color: "var(--text-3)",
+          margin: "10px 0"
+        }
+      }, "Press ", /*#__PURE__*/React.createElement("b", null, "Connect"), " below to enable WhatsApp, then scan the QR (or pair from a terminal).");
     }
     if (st.state === "qr") {
       return /*#__PURE__*/React.createElement("div", {
@@ -3395,19 +3437,22 @@ That's a lot of water for a moon smaller than ours.`;
     }
     return /*#__PURE__*/React.createElement("div", {
       style: {
+        margin: "12px 0"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
         display: "flex",
         alignItems: "center",
         gap: 8,
         fontSize: 13,
-        color: "var(--text-3)",
-        margin: "12px 0"
+        color: "var(--text-3)"
       }
     }, /*#__PURE__*/React.createElement("span", {
       className: "typing",
       style: {
         height: 12
       }
-    }, /*#__PURE__*/React.createElement("span", null), /*#__PURE__*/React.createElement("span", null), /*#__PURE__*/React.createElement("span", null)), "Starting WhatsApp\u2026 the QR appears here in ~30s (first run installs its bridge).");
+    }, /*#__PURE__*/React.createElement("span", null), /*#__PURE__*/React.createElement("span", null), /*#__PURE__*/React.createElement("span", null)), "Enabling WhatsApp on your agent\u2026"), secs > 6 && /*#__PURE__*/React.createElement(TermHint, null));
   }
 
   // ---- Integrations: connect the agent to messaging channels ----
@@ -3447,19 +3492,33 @@ That's a lot of water for a moon smaller than ours.`;
         })
       }).then(r => r.json()).then(res => {
         setBusy(false);
-        if (res.ok) {
+        if (!res.ok) {
           onToast && onToast({
-            type: "success",
-            title: c.label + " connected",
-            desc: res.restarted ? "Restarting the agent gateway…" : "Saved"
+            type: "error",
+            title: "Could not save",
+            desc: res.error || "failed"
+          });
+          return;
+        }
+        if (c.kind === "qr") {
+          // Don't claim "connected" — pairing isn't done yet. Keep the card open so
+          // the QR / pairing status (WhatsAppPair) stays visible.
+          onToast && onToast({
+            type: "info",
+            title: c.label + " enabled",
+            desc: "Scan the QR below to link your phone."
+          });
+          load();
+        } else {
+          // Honest: "connected" only once the gateway actually (re)started to load it.
+          onToast && onToast({
+            type: res.restarted ? "success" : "info",
+            title: "Saved",
+            desc: res.restarted ? c.label + " is starting on your agent." : "Saved — start/restart your agent so it picks this up."
           });
           setOpen(null);
           load();
-        } else onToast && onToast({
-          type: "error",
-          title: "Could not connect",
-          desc: res.error || "failed"
-        });
+        }
       }).catch(() => {
         setBusy(false);
         onToast && onToast({
@@ -3683,7 +3742,8 @@ That's a lot of water for a moon smaller than ours.`;
           color: "var(--accent-deep)"
         }
       }, "Full docs \u2192")), cur.kind === "qr" && /*#__PURE__*/React.createElement(WhatsAppPair, {
-        connected: cur.connected
+        connected: cur.connected,
+        pairCmd: cur.pair_cmd
       }), cur.fields.map(f => /*#__PURE__*/React.createElement("div", {
         key: f.env,
         style: {
@@ -7605,6 +7665,16 @@ Object.assign(window, {
           if (s.id === streamingSidRef.current) return; // never overwrite a session mid-stream (would drop the live reply)
           const loc = byId.get(s.id);
           if (!loc || (s.updated || 0) > (loc.updated || 0)) {
+            // The server copy has no image base64 (stripped before sync) — restore
+            // the thumbnails from the local copy by message index so they don't vanish.
+            if (loc && loc.messages) {
+              (s.messages || []).forEach((m, mi) => {
+                const lm = loc.messages[mi];
+                if (m && m.images && lm && lm.images) m.images.forEach((im, ii) => {
+                  if (im && !im.b64 && lm.images[ii] && lm.images[ii].b64) im.b64 = lm.images[ii].b64;
+                });
+              });
+            }
             byId.set(s.id, s);
             syncSnap.current.set(s.id, _sansUpd(s));
           }
@@ -7639,13 +7709,24 @@ Object.assign(window, {
         });
         if (!bumped && syncSnap.current.size) return;
         payload.forEach(s => syncSnap.current.set(s.id, _sansUpd(s)));
+        // Don't ship megabytes of pasted-image base64 to the server every 700ms —
+        // strip image data from the sync payload (kept locally for the thumbnail).
+        const lean = payload.map(s => ({
+          ...s,
+          messages: (s.messages || []).map(m => m.images && m.images.length ? Object.assign({}, m, {
+            images: m.images.map(im => ({
+              name: im.name,
+              mime: im.mime
+            }))
+          }) : m)
+        }));
         fetch("/api/sessions", {
           method: "POST",
           headers: {
             "Content-Type": "application/json"
           },
           body: JSON.stringify({
-            sessions: payload
+            sessions: lean
           })
         }).then(r => r.json()).then(d => reconcileServer(d.sessions, d.deleted)).catch(() => {});
       }, 700);
@@ -8914,18 +8995,18 @@ Object.assign(window, {
         fontSize: 19,
         marginTop: 14
       }
-    }, "Hermes \u2014 Simple Chat"), /*#__PURE__*/React.createElement("div", {
+    }, "AgentBay"), /*#__PURE__*/React.createElement("div", {
       style: {
         color: "var(--text-3)",
         marginTop: 4
       }
-    }, "Version 3.0.1 \xB7 MIT License"), /*#__PURE__*/React.createElement("div", {
+    }, "MIT License"), /*#__PURE__*/React.createElement("div", {
       style: {
         color: "var(--text-faint)",
         fontSize: 13,
         marginTop: 18
       }
-    }, "Powered by Hermes Agent"))), modal && modal.kind === "tag" && /*#__PURE__*/React.createElement(Mo.TagModal, {
+    }, "Your on-device AI agent \u2014 Hermes & OpenClaw"))), modal && modal.kind === "tag" && /*#__PURE__*/React.createElement(Mo.TagModal, {
       session: modal.data,
       allTags: allTags.length ? allTags : ["code", "writing", "study"],
       onClose: () => setModal(null),

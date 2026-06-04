@@ -604,17 +604,27 @@ def sync_provider_to_gateway(pid, key, base_url=""):
 
 
 def restart_gateway():
-    """Restart the agent gateway so it loads newly-synced providers.
-    Relies on a passwordless sudoers rule for `systemctl restart hermes-gateway@*`."""
+    """Restart the agent gateway so it loads newly-written channel creds / providers.
+    EC2 multi-user uses a passwordless sudoers rule for systemd; standalone
+    (launchd / Windows / OpenClaw) drives the agent CLI directly (no sudo)."""
     prof = _gateway_profile()
-    if not prof:
-        return False
-    try:
-        subprocess.Popen(["sudo", "-n", "systemctl", "restart", f"hermes-gateway@{prof}.service"],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return True
-    except Exception:
-        return False
+    if prof:
+        try:
+            subprocess.Popen(["sudo", "-n", "systemctl", "restart", f"hermes-gateway@{prof}.service"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+        except Exception:
+            return False
+    for bn in ("hermes", "openclaw"):     # standalone: `hermes gateway restart` / `openclaw gateway restart`
+        b = which(bn)
+        if b:
+            try:
+                subprocess.Popen([b, "gateway", "restart"], env=_agent_env(),
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return True
+            except Exception:
+                pass
+    return False
 
 
 # ==================== Messaging integrations (channels) ====================
@@ -695,12 +705,13 @@ INTEGRATIONS = [
         "primary": "WHATSAPP_ENABLED",
         "docs": "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/whatsapp",
         "const": {"WHATSAPP_ENABLED": "true"},
+        "pair_cmd": "hermes whatsapp",
         "fields": [],
         "guide": [
-            "Press Connect — this starts the WhatsApp channel on your gateway.",
-            "A QR code appears here in a few seconds (first run sets up its bridge).",
-            "On your phone: WhatsApp → Settings → Linked Devices → Link a Device → scan the code.",
-            "Once linked, message that number from another phone to reach the agent.",
+            "Press Connect — this enables WhatsApp on your agent gateway.",
+            "If a QR appears below, scan it: WhatsApp → Settings → Linked Devices → Link a Device.",
+            "No QR in ~15s? WhatsApp pairing needs an interactive terminal — open one and run `hermes whatsapp`, scan the QR there.",
+            "This card shows 'Linked' automatically once pairing completes; then message that number to reach the agent.",
         ],
     },
     {
@@ -894,11 +905,18 @@ def _integration_public(c, env):
             "help": f.get("help", ""), "file": bool(f.get("file")),
             "is_set": bool(val),
         })
+    # "connected" must reflect REALITY, not just "a token is present in .env":
+    #  - QR channels (WhatsApp) → actually paired (creds.json exists)
+    #  - token channels → the token is set (the most we can know without a live probe)
+    if c["kind"] == "qr":
+        connected = (whatsapp_qr_status().get("state") == "paired")
+    else:
+        connected = bool(env.get(c["primary"], ""))
     return {
         "id": c["id"], "label": c["label"], "icon": c["icon"], "kind": c["kind"],
         "blurb": c["blurb"], "docs": c.get("docs", ""), "guide": c.get("guide", []),
         "pair_cmd": c.get("pair_cmd", ""), "fields": set_fields,
-        "connected": bool(env.get(c["primary"], "")),
+        "connected": connected,
     }
 
 
@@ -2396,6 +2414,7 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=N
     # capture the NEW turn's output — i.e. chunks that arrive after we send the
     # prompt — otherwise every reply prepends all earlier replies.
     capturing = [False]
+    tool_idx = {}; tool_n = [0]   # toolCallId -> slot, so multiple tools don't collapse into one
 
     def _send_prompt(sid):
         capturing[0] = True
@@ -2451,8 +2470,12 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=N
                     tx = _ANSI_RE.sub("", (u.get("content") or {}).get("text", ""))
                     if tx:
                         yield ("reasoning", tx)
-                elif t == "tool_call":
-                    yield ("tool", {"name": u.get("title") or u.get("kind") or "tool", "args": _acp_tool_text(u)})
+                elif t in ("tool_call", "tool_call_update"):
+                    tid = u.get("toolCallId") or u.get("id") or ("t%d" % tool_n[0])
+                    if tid not in tool_idx:
+                        tool_idx[tid] = tool_n[0]; tool_n[0] += 1
+                    yield ("tool", {"name": u.get("title") or u.get("kind") or "tool",
+                                    "args": _acp_tool_text(u), "index": tool_idx[tid]})
                 continue
             if "result" in m or "error" in m:
                 if mid == st.get("init"):
@@ -2684,7 +2707,7 @@ def _agent_route(cfg, data):
         model_id = None if mdl in ("default", "hermes-agent", "") else mdl
         return (True, model_id, images, {}, "hermes")
     hp = _HERMES_PROVIDER.get(pid, pid)
-    model_id = hp + ":" + mdl
+    model_id = _agent_model_id(hp, mdl)   # strips the implicit `:latest` for ollama/custom
     env = {}
     spec = PROVIDERS.get(pid, {})
     p = cfg.get("providers", {}).get(pid, {})
@@ -2918,42 +2941,59 @@ def chat_complete(cfg, messages, provider=None, model=None, session_id=None):
         return {"error": str(e)}
 
 
+def _parse_followups(reply):
+    reply = (reply or "").strip()
+    reply = re.sub(r"```[a-zA-Z]*", "", reply).replace("```", "").strip()
+    arr = []
+    mt = re.search(r"\[.*\]", reply, re.S)
+    if mt:
+        try:
+            arr = json.loads(mt.group(0))
+        except Exception:
+            arr = []
+    if not arr:                       # fallbacks: quoted questions, then question-like lines
+        arr = re.findall(r'"([^"]+\?)"', reply) or \
+              [re.sub(r'^[\s\-\*\d\.\)]+', '', ln).strip().strip('"')
+               for ln in reply.splitlines() if ln.strip().endswith("?")]
+    return {"followups": [str(x).strip() for x in arr if str(x).strip()][:3]}
+
+
 def gen_followups(cfg, messages, provider=None, model=None):
     """Ask the model for 3 short, relevant follow-up questions grounded in the
     actual conversation (replaces the old canned client-side suggestions)."""
-    pid, spec, p = resolve_provider(cfg, provider)
-    base, key = p["base_url"], p["key"]
-    mdl = model or p["model"]
-    if spec["needs_key"] and not key:
-        return {"followups": []}
     convo = [{"role": m["role"], "content": m["content"]}
              for m in messages if m.get("role") in ("user", "assistant") and m.get("content")][-6:]
     if not convo:
         return {"followups": []}
     sysmsg = ("You generate follow-up questions. Based ONLY on the conversation so far, write 3 short, "
               "specific questions the USER would naturally ask next (first person, addressed to the assistant). "
-              "Return ONLY a JSON array of 3 strings — no prose, no numbering.")
+              "Do NOT use any tools — just output. Return ONLY a JSON array of 3 strings, no prose, no numbering.")
+    # Agent-held providers (Nous OAuth, custom, …) have no local key here — ask the
+    # on-device agent for the follow-ups instead of calling the provider directly.
+    is_agent, model_id, _imgs, env, kind = _agent_route(cfg, {"provider": provider, "model": model})
+    if is_agent:
+        text = sysmsg + "\n\nConversation so far:\n" + \
+               "\n".join("%s: %s" % (m["role"], m["content"]) for m in convo) + \
+               "\n\nReturn the 3 questions now as a JSON array."
+        reply = ""
+        try:
+            for ev, payload in local_agent_stream([{"role": "user", "content": text}], None, model_id, None, env, kind):
+                if ev == "token":
+                    reply += payload
+        except Exception:
+            return {"followups": []}
+        return _parse_followups(reply)
+    # Direct provider call (this provider has a local API key).
+    pid, spec, p = resolve_provider(cfg, provider)
+    base, key = p["base_url"], p["key"]
+    mdl = model or p["model"]
+    if spec["needs_key"] and not key:
+        return {"followups": []}
     msgs = [{"role": "system", "content": sysmsg}] + convo + \
            [{"role": "user", "content": "Return the 3 follow-up questions now as a JSON array."}]
     try:
-        # Reasoning models (e.g. deepseek-v4-pro) spend tokens "thinking" before
-        # emitting output — give enough headroom that the answer still fits.
         reply, _ = _provider_call(spec, base, key, mdl, msgs, max_tokens=1024, timeout=45)
-        reply = (reply or "").strip()
-        reply = re.sub(r"```[a-zA-Z]*", "", reply).replace("```", "").strip()
-        arr = []
-        mt = re.search(r"\[.*\]", reply, re.S)
-        if mt:
-            try:
-                arr = json.loads(mt.group(0))
-            except Exception:
-                arr = []
-        if not arr:                       # fallbacks: quoted questions, then question-like lines
-            arr = re.findall(r'"([^"]+\?)"', reply) or \
-                  [re.sub(r'^[\s\-\*\d\.\)]+', '', ln).strip().strip('"')
-                   for ln in reply.splitlines() if ln.strip().endswith("?")]
-        arr = [str(x).strip() for x in arr if str(x).strip()][:3]
-        return {"followups": arr}
+        return _parse_followups(reply)
     except Exception:
         return {"followups": []}
 
