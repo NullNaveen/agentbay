@@ -827,14 +827,9 @@ That's a lot of water for a moon smaller than ours.`;
     return (
       <div className="turn assistant anim-fadeup">
         <div className="assistant-head">
-          {streaming && !msg.content ? (
-            <window.Mascot label="Thinking" />
-          ) : (
-            <>
-              <span className="am-icon"><window.HermesGlyph size={17} /></span>
-              <span className="am-name">{meta.name}</span>
-            </>
-          )}
+          <span className="am-icon"><window.HermesGlyph size={17} flap={streaming && !msg.content} /></span>
+          <span className="am-name">{meta.name}</span>
+          {streaming && !msg.content && <span className="am-thinking shimmer-text">Thinking…</span>}
           {showTimestamps && msg.ts && <span className="ts">{msg.ts}</span>}
         </div>
 

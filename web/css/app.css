@@ -329,6 +329,7 @@ body.no-anim *::after {
 }
 .no-anim .assistant-head .am-icon.thinking { animation: none; }
 .assistant-head .am-name { font-weight: 650; font-size: 14.5px; }
+.assistant-head .am-thinking { font-size: 13px; font-weight: 500; margin-left: 2px; }
 .assistant-head .ts { font-size: 12px; color: var(--text-3); margin-left: 2px; }
 
 .activity {

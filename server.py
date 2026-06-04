@@ -2292,7 +2292,14 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=N
         except Exception:
             pass
 
+    # On session/load (resume) the adapter REPLAYS the conversation's prior
+    # assistant turns as agent_message_chunk updates. We must ignore those and only
+    # capture the NEW turn's output — i.e. chunks that arrive after we send the
+    # prompt — otherwise every reply prepends all earlier replies.
+    capturing = [False]
+
     def _send_prompt(sid):
+        capturing[0] = True
         return send("session/prompt", {"sessionId": sid, "prompt": prompt_blocks})
 
     def _proceed(sid):
@@ -2333,6 +2340,8 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=N
                 reply(mid, {})            # we advertised no caps; just ack anything stray
                 continue
             if meth == "session/update":
+                if not capturing[0]:
+                    continue            # ignore resume-replay of prior turns (pre-prompt)
                 u = m.get("params", {}).get("update", {}) or {}
                 t = u.get("sessionUpdate")
                 if t == "agent_message_chunk":

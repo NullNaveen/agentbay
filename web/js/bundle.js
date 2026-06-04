@@ -1633,15 +1633,16 @@ That's a lot of water for a moon smaller than ours.`;
       className: "turn assistant anim-fadeup"
     }, /*#__PURE__*/React.createElement("div", {
       className: "assistant-head"
-    }, streaming && !msg.content ? /*#__PURE__*/React.createElement(window.Mascot, {
-      label: "Thinking"
-    }) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+    }, /*#__PURE__*/React.createElement("span", {
       className: "am-icon"
     }, /*#__PURE__*/React.createElement(window.HermesGlyph, {
-      size: 17
+      size: 17,
+      flap: streaming && !msg.content
     })), /*#__PURE__*/React.createElement("span", {
       className: "am-name"
-    }, meta.name)), showTimestamps && msg.ts && /*#__PURE__*/React.createElement("span", {
+    }, meta.name), streaming && !msg.content && /*#__PURE__*/React.createElement("span", {
+      className: "am-thinking shimmer-text"
+    }, "Thinking\u2026"), showTimestamps && msg.ts && /*#__PURE__*/React.createElement("span", {
       className: "ts"
     }, msg.ts)), msg.thought ? /*#__PURE__*/React.createElement(Activity, {
       seconds: msg.thought
