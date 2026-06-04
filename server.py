@@ -2159,11 +2159,12 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900):
         return
     try:
         proc = subprocess.Popen([hb, "acp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, text=True, bufsize=1)
+                                stderr=subprocess.PIPE, text=True, bufsize=1)
     except Exception as e:
-        yield ("error", "could not start agent: %s" % e)
-        yield ("done", {})
+        yield ("__fail__", "could not start `hermes acp`: %s" % e)
         return
+    errbuf = []
+    threading.Thread(target=lambda: errbuf.append((proc.stderr.read() or "")[:500]) if proc.stderr else None, daemon=True).start()
     q = queue.Queue()
 
     def _reader():
@@ -2232,6 +2233,8 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900):
                 continue
             if "result" in m or "error" in m:
                 if mid == st.get("init"):
+                    if "error" in m:
+                        yield ("__fail__", "initialize failed: " + str(m.get("error"))[:200]); return
                     if acp_sid:
                         st["load"] = send("session/load", {"cwd": cwd, "sessionId": acp_sid, "mcpServers": []})
                     else:
@@ -2242,6 +2245,8 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900):
                     else:
                         st["prompt"] = send("session/prompt", {"sessionId": acp_sid, "prompt": [{"type": "text", "text": user_text}]})
                 elif mid == st.get("new"):
+                    if "error" in m:
+                        yield ("__fail__", "session/new error: " + str(m.get("error"))[:200]); return
                     acp_sid = (m.get("result") or {}).get("sessionId")
                     if acp_sid:
                         if session_id:
@@ -2249,8 +2254,7 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900):
                                 a = _acp_load_map(); a[session_id] = acp_sid; _acp_save_map(a)
                         st["prompt"] = send("session/prompt", {"sessionId": acp_sid, "prompt": [{"type": "text", "text": user_text}]})
                     else:
-                        yield ("error", "agent session could not start")
-                        break
+                        yield ("__fail__", "session/new returned no sessionId" + ((" — " + (errbuf[0] if errbuf else "")) if errbuf else "")); return
                 elif mid == st.get("prompt"):
                     if "error" in m:
                         yield ("error", str(m.get("error"))[:300])
@@ -2265,6 +2269,87 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900):
             proc.terminate()
         except Exception:
             pass
+
+
+_CHAT_SESS_FILE = CONFIG_DIR / "chat_sessions.json"
+
+
+def _hermes_chat_fallback(messages, session_id=None):
+    """Reliable agent path when ACP isn't available (e.g. the acp extra isn't
+    installed): `hermes chat -q` runs the full tool-enabled agent and prints the
+    final reply. No streaming/thinking, but it works. Carries history via --resume."""
+    hb = which("hermes")
+    user_text = _latest_user(messages)
+    if not hb or not user_text:
+        yield ("token", "⚠ the on-device agent isn't available.")
+        yield ("done", {})
+        return
+    cmap = {}
+    try:
+        cmap = json.loads(_CHAT_SESS_FILE.read_text())
+    except Exception:
+        cmap = {}
+    prev = cmap.get(session_id) if session_id else None
+    cmd = [hb, "chat", "-q", user_text, "-Q", "--source", "tool", "--accept-hooks"]
+    if prev:
+        cmd += ["--resume", prev]
+    env = dict(os.environ)
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=900, env=env,
+                           errors="replace", cwd=str(Path.home()))
+    except Exception as e:
+        yield ("token", "⚠ agent error: %s" % e)
+        yield ("done", {})
+        return
+    sid, reply_lines = None, []
+    for line in (r.stdout or "").splitlines():
+        s = line.strip()
+        if not sid and s.lower().startswith("session_id:"):
+            sid = s.split(":", 1)[1].strip()
+            continue
+        if s.startswith("↻") or s.startswith("✓ Resumed") or s.startswith("Resumed session"):
+            continue
+        reply_lines.append(line)
+    reply = "\n".join(reply_lines).strip()
+    if sid and session_id:
+        cmap[session_id] = sid
+        try:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            _CHAT_SESS_FILE.write_text(json.dumps(cmap))
+        except Exception:
+            pass
+    if not reply:
+        reply = "⚠ the agent returned nothing." + ((" " + (r.stderr or "")[:200]) if r.stderr else "")
+    yield ("token", reply)
+    yield ("done", {})
+
+
+def local_agent_stream(messages, session_id=None):
+    """Run the on-device agent. Prefer ACP (streams reply+thinking+tools); if ACP
+    can't start (no output / handshake fail — common on Windows when the acp extra
+    isn't installed), fall back to the reliable `hermes chat -q` path."""
+    emitted = 0
+    failed = None
+    for ev, payload in acp_stream_turn(messages, session_id):
+        if ev == "__fail__":
+            failed = payload
+            break
+        if ev == "done":
+            if emitted == 0:
+                failed = "no output from ACP"
+                break
+            yield ev, payload
+            return
+        if ev in ("token", "reasoning", "tool"):
+            emitted += 1
+        yield ev, payload
+    if emitted == 0:
+        for ev, payload in _hermes_chat_fallback(messages, session_id):
+            yield ev, payload
+    else:
+        yield ("done", {})
 
 
 def _acp_probe(hb, timeout=15):
@@ -2330,10 +2415,14 @@ def agent_debug():
         ok, detail = _acp_probe(hb)
         info["acp_handshake_ok"] = ok
         info["acp_detail"] = detail
-        info["agent_ready"] = ok
+        # Usable as long as Hermes is here — ACP streams it, else `hermes chat` runs it.
+        info["agent_ready"] = True
+        info["mode"] = "acp (streaming)" if ok else "hermes chat (fallback — ACP not available)"
     else:
         info["agent_ready"] = False
-        info["acp_detail"] = "ACP disabled" + (" (multi-user EC2)" if info["is_multiuser_ec2"] else "" if hb else " (hermes not found)")
+        info["mode"] = "none"
+        info["acp_detail"] = ("multi-user EC2 — uses the gateway" if info["is_multiuser_ec2"]
+                              else "Hermes not found — install it below")
     return info
 
 
@@ -2934,10 +3023,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/chat":
             cfg = load_config()
             msgs = data.get("messages") or []
-            if _acp_available() and cfg.get("agent_mode") is not False:
+            if _acp_available() and data.get("model") == "hermes-agent" and cfg.get("agent_mode") is not False:
                 reply, reasoning, tools = "", "", []
                 t0 = time.time()
-                for ev, payload in acp_stream_turn(msgs, data.get("session_id")):
+                for ev, payload in local_agent_stream(msgs, data.get("session_id")):
                     if ev == "token":
                         reply += payload
                     elif ev == "reasoning":
@@ -2972,9 +3061,9 @@ class Handler(BaseHTTPRequestHandler):
 
             try:
                 use_gw = gw and not (pid == "local" and p["base_url"].rstrip("/") == gw["base_url"] and not gw.get("key"))
-                if _acp_available() and cfg.get("agent_mode") is not False:
-                    # the real on-device agent over ACP (tools, terminal) — no gateway needed
-                    for ev, payload in acp_stream_turn(msgs, data.get("session_id")):
+                if _acp_available() and data.get("model") == "hermes-agent" and cfg.get("agent_mode") is not False:
+                    # the real on-device agent (tools, terminal) — no gateway needed
+                    for ev, payload in local_agent_stream(msgs, data.get("session_id")):
                         emit(ev, payload)
                 elif use_gw:
                     for ev, payload in _agent_chat_stream(gw, pid, mdl, msgs, data.get("session_id")):
