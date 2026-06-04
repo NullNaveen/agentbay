@@ -5,3 +5,6 @@ __pycache__/
 .agentbay/
 node_modules/
 .agentbay-build
+
+# local agent/session dir
+.claude/

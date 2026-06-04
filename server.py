@@ -12,6 +12,7 @@ Run:  python3 server.py [--port 8700] [--host 127.0.0.1] [--no-browser]
 
 import argparse
 import base64
+import hashlib
 import datetime
 import io
 import json
@@ -335,13 +336,27 @@ def public_config(cfg):
 
 
 def enabled_models(cfg):
-    """Flatten the user-enabled models across all providers — drives the top dropdown.
-    When a local Hermes agent is present, always offer it first so the user can chat
-    immediately (it's the real on-device agent), even before adding any provider."""
+    """The models the user can pick — drives the top dropdown.
+
+    With a local Hermes agent (standalone desktop), EVERY model runs THROUGH the
+    agent (real tools, terminal, files) using that provider+model as its brain —
+    this is an agent platform, not a plain chatbot. We list the user's actually
+    authenticated Hermes providers (Nous Portal, AWS Bedrock, GitHub Copilot,
+    Ollama/custom, …) so picking any of them just works. Without an agent
+    (EC2 / no Hermes), fall back to AgentBay's own configured providers."""
     out = []
     if _acp_available():
-        out.append({"id": "local::hermes-agent", "provider": "local", "model": "hermes-agent",
-                    "label": "Hermes Agent", "provider_label": "On this device"})
+        out.append({"id": "agent::default", "provider": "agent", "model": "default",
+                    "label": "Agent · default model", "provider_label": "On this device"})
+        for prov in _hermes_provider_models():
+            pid = prov.get("id"); plabel = prov.get("label") or pid
+            for m in prov.get("models", []):
+                if not m:
+                    continue
+                mid = _agent_model_id(pid, m)
+                out.append({"id": "agent::" + mid, "provider": "agent", "model": mid,
+                            "label": m, "provider_label": plabel})
+        return out
     for pid, spec in PROVIDERS.items():
         p = cfg.get("providers", {}).get(pid, {})
         if spec["needs_key"] and not p.get("key"):
@@ -2126,6 +2141,88 @@ def _acp_available():
     return bool(which("hermes"))
 
 
+def _hermes_python():
+    """The Python inside Hermes's venv (so we can import hermes_cli). The `hermes`
+    binary lives in venv/bin (Unix) or venv/Scripts (Windows); python is a sibling."""
+    hb = which("hermes")
+    if not hb:
+        return None
+    try:
+        real = os.path.realpath(hb)
+    except Exception:
+        real = hb
+    bindir = os.path.dirname(real)
+    for name in ("python", "python3", "python.exe", "pythonw.exe"):
+        cand = os.path.join(bindir, name)
+        if os.path.exists(cand):
+            return cand
+    return None
+
+
+# Cache the user's real Hermes providers+models (Nous Portal, Bedrock, Copilot,
+# Ollama/custom, …). provider_model_ids() can hit the network (live /v1/models),
+# so we cache aggressively and refresh in the background — never block a request.
+_PROV_CACHE = {"t": 0.0, "data": []}
+_PROV_LOCK = threading.Lock()
+_PROV_REFRESHING = [False]
+_PROV_SCRIPT = (
+    "import json\n"
+    "from hermes_cli.models import list_available_providers, provider_model_ids\n"
+    "out=[]; seen=set()\n"
+    "for p in list_available_providers():\n"
+    "    pid=p.get('id')\n"
+    "    if not p.get('authenticated') or pid in seen: continue\n"
+    "    seen.add(pid)\n"
+    "    try: ms=provider_model_ids(pid) or []\n"
+    "    except Exception: ms=[]\n"
+    "    out.append({'id':pid,'label':p.get('label') or pid,'models':ms})\n"
+    "print(json.dumps(out))\n"
+)
+
+
+def _agent_model_id(pid, model):
+    """Canonical ACP modelId `provider:model`. Strip the implicit `:latest` tag on
+    Ollama/custom models — Hermes mis-parses `custom:foo:latest` as model 'latest'."""
+    m = model
+    if pid in ("custom", "ollama", "lmstudio") and m.endswith(":latest"):
+        m = m[: -len(":latest")]
+    return pid + ":" + m
+
+
+def _refresh_provider_models():
+    py = _hermes_python()
+    if not py:
+        return
+    try:
+        env = dict(os.environ); env["PYTHONUTF8"] = "1"; env["PYTHONIOENCODING"] = "utf-8"
+        r = subprocess.run([py, "-c", _PROV_SCRIPT], capture_output=True, text=True,
+                           timeout=30, env=env, errors="replace")
+        data = json.loads((r.stdout or "").strip() or "[]")
+        if isinstance(data, list):
+            with _PROV_LOCK:
+                _PROV_CACHE["data"] = data
+                _PROV_CACHE["t"] = time.time()
+    except Exception:
+        pass
+    finally:
+        _PROV_REFRESHING[0] = False
+
+
+def _hermes_provider_models(ttl=300):
+    """Cached list of {id,label,models[]} for the user's authenticated Hermes
+    providers. Returns stale/empty immediately and refreshes in the background."""
+    if not _acp_available():
+        return []
+    now = time.time()
+    with _PROV_LOCK:
+        fresh = (now - _PROV_CACHE["t"]) < ttl and _PROV_CACHE["data"]
+        data = list(_PROV_CACHE["data"])
+    if not fresh and not _PROV_REFRESHING[0]:
+        _PROV_REFRESHING[0] = True
+        threading.Thread(target=_refresh_provider_models, daemon=True).start()
+    return data
+
+
 def _latest_user(messages):
     for m in reversed(messages or []):
         if m.get("role") == "user" and m.get("content"):
@@ -2147,11 +2244,15 @@ def _acp_tool_text(u):
     return (" ".join(parts))[:600]
 
 
-def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900):
+def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=None, images=None):
     """Run ONE agent turn via `hermes acp` over stdio. Yields (type, data):
-    token / reasoning / tool / error / done. Sessions persist (agentbay id ↔ ACP id)."""
+    token / reasoning / tool / error / done. Sessions persist (agentbay id ↔ ACP id).
+    model_id (canonical `provider:model`, e.g. `nous:anthropic/claude-opus-4.6`) is
+    applied per-session via session/set_model so the picked model is the agent's brain."""
     hb = which("hermes")
     cwd = cwd or str(Path.home())
+    if model_id in ("default", "hermes-agent", ""):
+        model_id = None
     user_text = _latest_user(messages)
     if not hb or not user_text:
         yield ("error", "no local agent or empty message")
@@ -2188,6 +2289,28 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900):
         proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": i, "result": res}) + "\n")
         proc.stdin.flush()
 
+    prompt_blocks = [{"type": "text", "text": user_text}]
+    for im in (images or []):
+        try:
+            data = (im.get("b64") or "")
+            if data[:5] == "data:" and "," in data:
+                data = data.split(",", 1)[1]   # strip the data:URL prefix → raw base64
+            if data:
+                prompt_blocks.append({"type": "image", "mimeType": im.get("mime") or "image/png", "data": data})
+        except Exception:
+            pass
+
+    def _send_prompt(sid):
+        return send("session/prompt", {"sessionId": sid, "prompt": prompt_blocks})
+
+    def _proceed(sid):
+        # Apply the picked model for this session, then prompt. set_model failures
+        # are non-fatal — we still prompt (the agent uses its default brain).
+        if model_id:
+            st["setmodel"] = send("session/set_model", {"sessionId": sid, "modelId": model_id})
+        else:
+            st["prompt"] = _send_prompt(sid)
+
     amap = _acp_load_map()
     acp_sid = amap.get(session_id) if session_id else None
     st = {}
@@ -2221,11 +2344,11 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900):
                 u = m.get("params", {}).get("update", {}) or {}
                 t = u.get("sessionUpdate")
                 if t == "agent_message_chunk":
-                    tx = (u.get("content") or {}).get("text", "")
+                    tx = _ANSI_RE.sub("", (u.get("content") or {}).get("text", ""))
                     if tx:
                         yield ("token", tx)
                 elif t == "agent_thought_chunk":
-                    tx = (u.get("content") or {}).get("text", "")
+                    tx = _ANSI_RE.sub("", (u.get("content") or {}).get("text", ""))
                     if tx:
                         yield ("reasoning", tx)
                 elif t == "tool_call":
@@ -2243,7 +2366,7 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900):
                     if "error" in m:
                         st["new"] = send("session/new", {"cwd": cwd, "mcpServers": []})
                     else:
-                        st["prompt"] = send("session/prompt", {"sessionId": acp_sid, "prompt": [{"type": "text", "text": user_text}]})
+                        _proceed(acp_sid)
                 elif mid == st.get("new"):
                     if "error" in m:
                         yield ("__fail__", "session/new error: " + str(m.get("error"))[:200]); return
@@ -2252,9 +2375,12 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900):
                         if session_id:
                             with _acp_lock:
                                 a = _acp_load_map(); a[session_id] = acp_sid; _acp_save_map(a)
-                        st["prompt"] = send("session/prompt", {"sessionId": acp_sid, "prompt": [{"type": "text", "text": user_text}]})
+                        _proceed(acp_sid)
                     else:
                         yield ("__fail__", "session/new returned no sessionId" + ((" — " + (errbuf[0] if errbuf else "")) if errbuf else "")); return
+                elif mid == st.get("setmodel"):
+                    # set_model done (errors ignored) → now send the actual prompt
+                    st["prompt"] = _send_prompt(acp_sid)
                 elif mid == st.get("prompt"):
                     if "error" in m:
                         yield ("error", str(m.get("error"))[:300])
@@ -2272,12 +2398,36 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900):
 
 
 _CHAT_SESS_FILE = CONFIG_DIR / "chat_sessions.json"
+_ATTACH_DIR = CONFIG_DIR / "attachments"
 
 
-def _hermes_chat_fallback(messages, session_id=None):
+def _attachment_paths(images):
+    """Persist pasted/attached image data ({mime,b64}) to temp files; return paths.
+    Used by the `hermes chat --image` fallback (the ACP path sends data inline)."""
+    paths = []
+    for im in (images or []):
+        b64 = (im or {}).get("b64") or ""
+        if not b64:
+            continue
+        try:
+            raw = base64.b64decode(b64.split(",", 1)[-1])
+            ext = {"image/png": ".png", "image/jpeg": ".jpg", "image/jpg": ".jpg",
+                   "image/gif": ".gif", "image/webp": ".webp"}.get((im.get("mime") or "").lower(), ".png")
+            _ATTACH_DIR.mkdir(parents=True, exist_ok=True)
+            fp = _ATTACH_DIR / ("img-" + hashlib.sha1(raw).hexdigest()[:16] + ext)
+            if not fp.exists():
+                fp.write_bytes(raw)
+            paths.append(str(fp))
+        except Exception:
+            pass
+    return paths
+
+
+def _hermes_chat_fallback(messages, session_id=None, model_id=None, images=None):
     """Reliable agent path when ACP isn't available (e.g. the acp extra isn't
     installed): `hermes chat -q` runs the full tool-enabled agent and prints the
-    final reply. No streaming/thinking, but it works. Carries history via --resume."""
+    final reply. No streaming/thinking, but it works. Carries history via --resume.
+    Honors the picked model via --provider/--model and images via --image."""
     hb = which("hermes")
     user_text = _latest_user(messages)
     if not hb or not user_text:
@@ -2291,6 +2441,11 @@ def _hermes_chat_fallback(messages, session_id=None):
         cmap = {}
     prev = cmap.get(session_id) if session_id else None
     cmd = [hb, "chat", "-q", user_text, "-Q", "--source", "tool", "--accept-hooks"]
+    if model_id and model_id not in ("default", "hermes-agent") and ":" in model_id:
+        prov, mdl = model_id.split(":", 1)
+        cmd += ["--provider", prov, "--model", mdl]
+    for pth in (_attachment_paths(images) or []):
+        cmd += ["--image", pth]
     if prev:
         cmd += ["--resume", prev]
     env = dict(os.environ)
@@ -2312,7 +2467,7 @@ def _hermes_chat_fallback(messages, session_id=None):
         if s.startswith("↻") or s.startswith("✓ Resumed") or s.startswith("Resumed session"):
             continue
         reply_lines.append(line)
-    reply = "\n".join(reply_lines).strip()
+    reply = _ANSI_RE.sub("", "\n".join(reply_lines)).strip()
     if sid and session_id:
         cmap[session_id] = sid
         try:
@@ -2326,13 +2481,14 @@ def _hermes_chat_fallback(messages, session_id=None):
     yield ("done", {})
 
 
-def local_agent_stream(messages, session_id=None):
+def local_agent_stream(messages, session_id=None, model_id=None, images=None):
     """Run the on-device agent. Prefer ACP (streams reply+thinking+tools); if ACP
     can't start (no output / handshake fail — common on Windows when the acp extra
-    isn't installed), fall back to the reliable `hermes chat -q` path."""
+    isn't installed), fall back to the reliable `hermes chat -q` path. The picked
+    model (`provider:model`) is the agent's brain via set_model / --provider+--model."""
     emitted = 0
     failed = None
-    for ev, payload in acp_stream_turn(messages, session_id):
+    for ev, payload in acp_stream_turn(messages, session_id, model_id=model_id, images=images):
         if ev == "__fail__":
             failed = payload
             break
@@ -2346,10 +2502,25 @@ def local_agent_stream(messages, session_id=None):
             emitted += 1
         yield ev, payload
     if emitted == 0:
-        for ev, payload in _hermes_chat_fallback(messages, session_id):
+        for ev, payload in _hermes_chat_fallback(messages, session_id, model_id=model_id, images=images):
             yield ev, payload
     else:
         yield ("done", {})
+
+
+def _agent_route(cfg, data):
+    """Decide whether a chat request runs through the on-device agent, and with
+    which model+images. When a local Hermes agent is available, EVERY picked model
+    runs through it (tools + terminal) — that's the agent platform. Returns
+    (is_agent, model_id, images)."""
+    if not (_acp_available() and cfg.get("agent_mode") is not False):
+        return (False, None, None)
+    prov = (data.get("provider") or "").lower()
+    mdl = data.get("model") or ""
+    if not (prov in ("agent", "local") or mdl == "hermes-agent"):
+        return (False, None, None)
+    model_id = None if mdl in ("default", "hermes-agent", "") else mdl
+    return (True, model_id, data.get("images") or [])
 
 
 def _acp_probe(hb, timeout=15):
@@ -3023,10 +3194,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/chat":
             cfg = load_config()
             msgs = data.get("messages") or []
-            if _acp_available() and data.get("model") == "hermes-agent" and cfg.get("agent_mode") is not False:
+            is_agent, model_id, images = _agent_route(cfg, data)
+            if is_agent:
                 reply, reasoning, tools = "", "", []
                 t0 = time.time()
-                for ev, payload in local_agent_stream(msgs, data.get("session_id")):
+                for ev, payload in local_agent_stream(msgs, data.get("session_id"), model_id, images):
                     if ev == "token":
                         reply += payload
                     elif ev == "reasoning":
@@ -3035,7 +3207,7 @@ class Handler(BaseHTTPRequestHandler):
                         tools.append(payload)
                     elif ev == "error":
                         reply = reply or ("⚠ " + str(payload))
-                return self._send(200, {"reply": reply, "agent": True, "model": "hermes-agent",
+                return self._send(200, {"reply": reply, "agent": True, "model": data.get("model") or "hermes-agent",
                                         "reasoning": reasoning, "tools": tools,
                                         "latency_ms": int((time.time() - t0) * 1000)})
             res = chat_complete(cfg, msgs, provider=data.get("provider"), model=data.get("model"), session_id=data.get("session_id"))
@@ -3061,9 +3233,11 @@ class Handler(BaseHTTPRequestHandler):
 
             try:
                 use_gw = gw and not (pid == "local" and p["base_url"].rstrip("/") == gw["base_url"] and not gw.get("key"))
-                if _acp_available() and data.get("model") == "hermes-agent" and cfg.get("agent_mode") is not False:
-                    # the real on-device agent (tools, terminal) — no gateway needed
-                    for ev, payload in local_agent_stream(msgs, data.get("session_id")):
+                is_agent, model_id, images = _agent_route(cfg, data)
+                if is_agent:
+                    # the real on-device agent (tools, terminal) — no gateway needed,
+                    # using the picked provider+model as its brain
+                    for ev, payload in local_agent_stream(msgs, data.get("session_id"), model_id, images):
                         emit(ev, payload)
                 elif use_gw:
                     for ev, payload in _agent_chat_stream(gw, pid, mdl, msgs, data.get("session_id")):
@@ -3304,6 +3478,11 @@ def main():
             return
         create_desktop_launcher()
     threading.Thread(target=_maybe_shortcut, daemon=True).start()
+
+    # Pre-warm the user's real Hermes provider+model list (Nous Portal, Bedrock,
+    # …) so the model picker is populated by the time the UI loads.
+    if _acp_available():
+        threading.Thread(target=_refresh_provider_models, daemon=True).start()
 
     # Onboarding: make the share-link tool available on every machine (any OS).
     # One-time, in the background, only if missing — so "Remote access" just works.

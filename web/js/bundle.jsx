@@ -166,14 +166,19 @@
 (function () {
   // Models shown in the chat menu are the user-ENABLED models, fetched live
   // from /api/enabled-models. Each entry id = "provider::model".
-  const PROVIDER_ICON = { openai: "Sparkle", anthropic: "Brain", deepseek: "Wand", gemini: "Globe", groq: "Zap", openrouter: "Layers", mistral: "Bot", nous: "Gift", local: "Server" };
+  const PROVIDER_ICON = { openai: "Sparkle", anthropic: "Brain", deepseek: "Wand", gemini: "Globe", groq: "Zap", openrouter: "Layers", mistral: "Bot", nous: "Gift", local: "Server", agent: "Bot" };
+  // When every model runs through the on-device agent they share provider "agent";
+  // pick the icon from the underlying provider label instead.
+  const LABEL_ICON = { "Nous Portal": "Gift", "AWS Bedrock": "Layers", "GitHub Copilot": "Sparkle", "Custom endpoint": "Server", "On this device": "Server" };
   const MODELS = [];   // mutated in place by refreshModels() so references hold
   function refreshModels() {
     return fetch("/api/enabled-models").then((r) => r.json()).then((d) => {
       MODELS.length = 0;
       (d.models || []).forEach((m) => MODELS.push({
-        id: m.provider + "::" + m.model, name: m.model, desc: m.provider_label,
-        icon: PROVIDER_ICON[m.provider] || "Bot", provider: m.provider, model: m.model,
+        id: m.provider + "::" + m.model, name: m.label || m.model, desc: m.provider_label,
+        group: m.provider_label || "Models",
+        icon: LABEL_ICON[m.provider_label] || PROVIDER_ICON[m.provider] || "Bot",
+        provider: m.provider, model: m.model,
       }));
       return MODELS;
     }).catch(() => MODELS);
@@ -925,7 +930,12 @@ That's a lot of water for a moon smaller than ours.`;
           {msgs.map((m, i) => {
             const isLast = i === msgs.length - 1;
             if (m.role === "user") {
-              return <div className="turn user anim-fadeup" key={i}><div className="user-bubble">{m.content}</div></div>;
+              return <div className="turn user anim-fadeup" key={i}>
+                {m.images && m.images.length > 0 && (
+                  <div className="user-images">{m.images.map((im, k) => <img key={k} src={im.b64} alt={im.name || "image"} loading="lazy" />)}</div>
+                )}
+                {m.content ? <div className="user-bubble">{m.content}</div> : null}
+              </div>;
             }
             const isStreamingThis = streaming && isLast;
             const liveMsg = isStreamingThis ? { ...m, content: streaming.text, reasoning: streaming.reasoning || m.reasoning, tools: streaming.tools && streaming.tools.length ? streaming.tools : m.tools } : m;
@@ -968,11 +978,12 @@ That's a lot of water for a moon smaller than ours.`;
   }
 
   /* ---------- Composer ---------- */
-  function Composer({ value, onChange, onSend, onStop, streaming, attachments, onAttach, onRemoveAttach,
+  function Composer({ value, onChange, onSend, onStop, streaming, attachments, onAttach, onRemoveAttach, onFiles,
     placeholder, suggestChips, onSuggestChip, onMic, focusKey }) {
     const taRef = useRef(null);
     const [focused, setFocused] = useState(false);
     const [launching, setLaunching] = useState(false);
+    const [drag, setDrag] = useState(false);
 
     const autosize = () => { const t = taRef.current; if (!t) return; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 220) + "px"; };
     useEffect(autosize, [value]);
@@ -986,16 +997,38 @@ That's a lot of water for a moon smaller than ours.`;
     const onKey = (e) => {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (streaming) return; doSend(); }
     };
+    // Paste an image (screenshot / copied picture) straight into the chat. Only
+    // intercept a PURE-image paste so normal text/rich paste still works.
+    const onPaste = (e) => {
+      if (!onFiles) return;
+      const items = Array.from((e.clipboardData && e.clipboardData.items) || []);
+      const imgs = items.filter((i) => i.kind === "file" && /^image\//.test(i.type));
+      const hasText = items.some((i) => i.kind === "string");
+      if (!imgs.length || hasText) return;
+      e.preventDefault();
+      const files = imgs.map((i) => i.getAsFile()).filter(Boolean);
+      if (files.length) onFiles(files);
+    };
+    const onDrop = (e) => {
+      if (!onFiles) return;
+      e.preventDefault(); setDrag(false);
+      const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+      if (files.length) onFiles(files);
+    };
+    const onDragOver = (e) => { if (onFiles && e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files")) { e.preventDefault(); setDrag(true); } };
+    const onDragLeave = (e) => { if (e.currentTarget === e.target) setDrag(false); };
 
     return (
       <div className="composer-wrap">
         <div className="composer-inner">
-          <div className={"composer" + (focused ? " focused" : "")}>
+          <div className={"composer" + (focused ? " focused" : "") + (drag ? " drag" : "")}
+            onDrop={onDrop} onDragOver={onDragOver} onDragLeave={onDragLeave}>
+            {drag && <div className="drop-veil"><I.Image size={22} /><span>Drop images or files to attach</span></div>}
             {attachments.length > 0 && (
               <div className="attach-chips">
                 {attachments.map((a, i) => (
-                  <div className="chip" key={i}>
-                    <span className="thumb">{a.kind === "image" ? <I.Image size={16} /> : <I.FileText size={16} />}</span>
+                  <div className={"chip" + (a.kind === "image" ? " img" : "")} key={i}>
+                    <span className="thumb">{a.kind === "image" && a.b64 ? <img src={a.b64} alt={a.name} /> : (a.kind === "image" ? <I.Image size={16} /> : <I.FileText size={16} />)}</span>
                     <span className="meta"><div className="nm">{a.name}</div><div className="sz">{a.size}</div></span>
                     <button className="x" aria-label="Remove" onClick={() => onRemoveAttach(i)}><I.X size={13} /></button>
                   </div>
@@ -1003,7 +1036,7 @@ That's a lot of water for a moon smaller than ours.`;
               </div>
             )}
             <textarea ref={taRef} rows={1} value={value} placeholder={placeholder || "Message Hermes…"}
-              onChange={(e) => onChange(e.target.value)} onKeyDown={onKey}
+              onChange={(e) => onChange(e.target.value)} onKeyDown={onKey} onPaste={onPaste}
               onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} aria-label="Message" />
 
             {suggestChips && suggestChips.length > 0 && !value && (
@@ -1342,7 +1375,7 @@ That's a lot of water for a moon smaller than ours.`;
       <div style={{ border: "1px solid " + (ready ? "var(--green)" : "var(--amber)"), background: "color-mix(in srgb, " + (ready ? "var(--green)" : "var(--amber)") + " 8%, transparent)", borderRadius: 11, padding: "11px 13px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 14, fontWeight: 600 }}>
           <span style={{ width: 9, height: 9, borderRadius: 9, background: ready ? "var(--green)" : "var(--amber)" }} />
-          {ready ? "On-device agent is ready — chat runs on this computer, with tools." : "On-device agent not active"}
+          {ready ? "Agent ready — every model you pick runs here, with tools (terminal, web, files)." : "On-device agent not active"}
         </div>
         {!ready && <div style={{ fontSize: 12.5, color: "var(--text-2)", marginTop: 5 }}>{d.acp_detail || "—"}{d.hermes_bin && d.hermes_bin.startsWith("(") ? " · install Hermes below" : ""}</div>}
         <div style={{ display: "flex", gap: 12, marginTop: 8, fontSize: 12 }}>
@@ -2299,21 +2332,57 @@ That's a lot of water for a moon smaller than ours.`;
 
   /* ---------- model dropdown ---------- */
   function ModelMenu({ anchorRef, current, defaultModel, onClose, onPick, onSetDefault }) {
+    const [q, setQ] = React.useState("");
+    const all = D.MODELS;
+    const ql = q.trim().toLowerCase();
+    const matches = ql ? all.filter((m) => (m.name + " " + (m.desc || "")).toLowerCase().includes(ql)) : all;
+    // group, preserving first-seen provider order
+    const order = []; const gmap = {};
+    matches.forEach((m) => { const g = m.group || "Models"; if (!gmap[g]) { gmap[g] = []; order.push(g); } gmap[g].push(m); });
+    const curMeta = all.find((m) => m.id === current);
+    const [open, setOpen] = React.useState({});
+    const isOpen = (g) => {
+      if (ql) return true;
+      if (g in open) return open[g];
+      if (curMeta && curMeta.group === g) return true;
+      return (gmap[g] || []).length <= 3 || order.length === 1;
+    };
     return (
-      <Popover anchorRef={anchorRef} onClose={onClose} align="left" className="model-menu" width={330}>
-        {D.MODELS.map((m) => {
-          const Ic = I[m.icon] || I.Bot;
-          return (
-            <button key={m.id} className={"model-opt" + (m.id === current ? " sel" : "")} onClick={() => { onClose(); onPick(m.id); }}>
-              <span className="mo-icon"><Ic size={16} /></span>
-              <span style={{ flex: 1, minWidth: 0 }}>
-                <span className="mo-name">{m.name}{m.id === defaultModel && <span className="tag-mini">Default</span>}</span>
-                <span className="mo-desc">{m.desc}</span>
-              </span>
-              {m.id === current && <span className="check"><I.Check size={17} /></span>}
-            </button>
-          );
-        })}
+      <Popover anchorRef={anchorRef} onClose={onClose} align="left" className="model-menu" width={368}>
+        <div className="mm-search">
+          <I.Search size={15} />
+          <input autoFocus className="mm-input" placeholder="Search models…" value={q} onChange={(e) => setQ(e.target.value)} />
+          {q && <button className="mm-clear" onClick={() => setQ("")} aria-label="Clear"><I.X size={14} /></button>}
+        </div>
+        <div className="mm-scroll">
+          {order.length === 0 && <div className="mm-empty">No models match “{q}”.</div>}
+          {order.map((g) => {
+            const items = gmap[g]; const exp = isOpen(g);
+            const GIc = I[(items[0] && items[0].icon)] || I.Bot;
+            return (
+              <div key={g} className="mm-group">
+                <button className="mm-head" onClick={() => setOpen((o) => Object.assign({}, o, { [g]: !exp }))}>
+                  <span className="mm-head-ic"><GIc size={15} /></span>
+                  <span className="mm-head-name">{g}</span>
+                  <span className="mm-head-count">{items.length}</span>
+                  <span className="mm-head-chev">{exp ? <I.ChevronDown size={15} /> : <I.ChevronRight size={15} />}</span>
+                </button>
+                {exp && items.map((m) => {
+                  const Ic = I[m.icon] || I.Bot;
+                  return (
+                    <button key={m.id} className={"model-opt" + (m.id === current ? " sel" : "")} onClick={() => { onClose(); onPick(m.id); }}>
+                      <span className="mo-icon"><Ic size={16} /></span>
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        <span className="mo-name">{m.name}{m.id === defaultModel && <span className="tag-mini">Default</span>}</span>
+                      </span>
+                      {m.id === current && <span className="check"><I.Check size={17} /></span>}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
         <div className="pop-divider" />
         <button className="pop-item" style={{ fontSize: 13, color: "var(--text-2)" }} onClick={() => { onClose(); onSetDefault(current); }}>
           <span className="ic"><I.Pin size={15} /></span> Set current as default
@@ -3327,6 +3396,7 @@ Object.assign(window, {
     // The store lives with the AgentBay instance; we merge by id (newest `updated`
     // wins) and honour tombstones, so a teammate's chats show up and deletes stick.
     const syncSnap = useRef(new Map());      // id -> JSON(content w/o `updated`) at last sync
+    const streamingSidRef = useRef(null);    // session with an in-flight turn — sync must never clobber it
     const syncReady = useRef(false);
     const sessionsLive = useRef(sessions);
     useEffect(() => { sessionsLive.current = sessions; }, [sessions]);
@@ -3344,6 +3414,7 @@ Object.assign(window, {
         (srv || []).forEach((raw) => {
           const s = _normSession(raw);
           if (!s || !s.id || delSet.has(s.id)) return;
+          if (s.id === streamingSidRef.current) return;   // never overwrite a session mid-stream (would drop the live reply)
           const loc = byId.get(s.id);
           if (!loc || (s.updated || 0) > (loc.updated || 0)) { byId.set(s.id, s); syncSnap.current.set(s.id, _sansUpd(s)); }
         });
@@ -3363,7 +3434,7 @@ Object.assign(window, {
       const t = setTimeout(() => {
         const now = Date.now();
         let bumped = false;
-        const payload = sessionsLive.current.map((s) => {
+        const payload = sessionsLive.current.filter((s) => s.id !== streamingSidRef.current).map((s) => {
           if (syncSnap.current.get(s.id) !== _sansUpd(s)) { bumped = true; return Object.assign({}, s, { updated: now }); }
           return s;
         });
@@ -3434,8 +3505,12 @@ Object.assign(window, {
     const refreshModels = React.useCallback(() => D.refreshModels().then((list) => {
       setModelsTick((t) => t + 1);
       const ids = list.map((m) => m.id);
-      setHomeModel((hm) => (hm && ids.includes(hm)) ? hm : (ids[0] || ""));
-      setDefaultModel((dm) => (dm && ids.includes(dm)) ? dm : (ids[0] || ""));
+      // Default to the first REAL provider model (we only list authenticated
+      // providers, so it works out of the box) rather than "agent::default",
+      // whose Hermes config may be unset → "No inference provider configured".
+      const firstReal = ids.find((id) => id !== "agent::default") || ids[0] || "";
+      setHomeModel((hm) => (hm && ids.includes(hm)) ? hm : firstReal);
+      setDefaultModel((dm) => (dm && ids.includes(dm)) ? dm : firstReal);
     }), []);
     useEffect(() => { refreshModels(); }, []);
     // App self-update: surface an available update as a persistent banner.
@@ -3481,6 +3556,7 @@ Object.assign(window, {
     const metaRef = useRef({});   // {sessionId: {reasoning, tools}} captured from the reply
     const sessionsRef = useRef(sessions);
     useEffect(() => { sessionsRef.current = sessions; }, [sessions]);
+    useEffect(() => { streamingSidRef.current = streaming ? streaming.sessionId : null; }, [streaming]);
 
     // overlays
     const [modal, setModal] = useState(null); // {kind, data}
@@ -3577,7 +3653,7 @@ Object.assign(window, {
       step();
     };
 
-    const startStream = (sessionId, prompt, model) => {
+    const startStream = (sessionId, prompt, model, images) => {
       const followups = [];   // real, relevant follow-ups are fetched after the reply (if enabled)
       // push empty assistant msg
       setSessions((ss) => ss.map((s) => s.id === sessionId ? {
@@ -3615,7 +3691,7 @@ Object.assign(window, {
       // real backend call → AgentBay. model id = "provider::model"
       const [provId, ...rest] = String(model || "").split("::");
       const modelName = rest.join("::");
-      const reqBody = JSON.stringify({ messages: history, provider: provId || undefined, model: modelName || undefined, session_id: sessionId });
+      const reqBody = JSON.stringify({ messages: history, provider: provId || undefined, model: modelName || undefined, session_id: sessionId, images: (images && images.length ? images : undefined) });
 
       // Live streaming: render tokens + the agent's thinking + tool calls as they
       // arrive. Falls back to the plain /api/chat + typewriter on any error.
@@ -3717,28 +3793,34 @@ Object.assign(window, {
     const send = (text) => {
       const typed = (text != null ? text : draft).trim();
       if (!typed && attachments.length === 0) return;
-      // Fold attached file contents into the message the model actually receives.
+      // Images are sent to the (multimodal) agent as real data — capture them now
+      // (state clears before startStream runs) and show them in the user's bubble.
+      const images = attachments.filter((a) => a.kind === "image" && a.b64).map((a) => ({ mime: a.mime, b64: a.b64, name: a.name }));
+      // Fold attached TEXT file contents into the message; only non-image, non-text
+      // files are listed "by name only" (images travel as image data, not a note).
       const textParts = attachments.filter((a) => a.text).map((a) => "\n\n--- Attached file: " + a.name + " ---\n" + a.text);
-      const named = attachments.filter((a) => !a.text).map((a) => a.name);
+      const named = attachments.filter((a) => !a.text && a.kind !== "image").map((a) => a.name);
       const body = typed + textParts.join("") + (named.length ? "\n\n[Attached (by name only): " + named.join(", ") + "]" : "");
       const title = (typed || (attachments[0] && attachments[0].name) || "New chat").slice(0, 40);
+      const userMsg = { role: "user", content: body };
+      if (images.length) userMsg.images = images;
 
       let sid = activeId;
       if (!active) {
         sid = uid();
         const newS = { id: sid, title, model: homeModel, group: "Today", tags: [], pinned: false, updated: Date.now(),
           projectId: composerProject || null, agentId: composerAgent || null,
-          messages: [{ role: "user", content: body }] };
+          messages: [userMsg] };
         setSessions((ss) => [newS, ...ss]);
         setActiveId(sid);
         if (!sessions.some((s) => s.messages.length > 1)) { fireConfetti(); }
         setComposerProject(null); setComposerAgent(null);  // context now lives on the session
       } else {
-        setSessions((ss) => ss.map((s) => s.id === sid ? { ...s, messages: [...s.messages, { role: "user", content: body }], updated: Date.now() } : s));
+        setSessions((ss) => ss.map((s) => s.id === sid ? { ...s, messages: [...s.messages, userMsg], updated: Date.now() } : s));
       }
       setDraft(""); setAttachments([]);
       const model = active ? active.model : homeModel;
-      setTimeout(() => startStream(sid, body, model), 60);
+      setTimeout(() => startStream(sid, body, model, images), 60);
     };
 
     /* ---- start a chat scoped to a project / agent ---- */
@@ -3815,7 +3897,9 @@ Object.assign(window, {
             body: JSON.stringify({ name: f.name, b64: String(fr.result) }) })
             .then((r) => r.json())
             .then((res) => {
-              setAttachments((x) => [...x, { name: f.name, size: fmtSize(f.size), kind, text: res.text || "" }]);
+              // Keep image bytes so they're sent to the (multimodal) agent, not just shown.
+              const extra = kind === "image" ? { b64: String(fr.result), mime: f.type || "image/png" } : {};
+              setAttachments((x) => [...x, { name: f.name, size: fmtSize(f.size), kind, text: res.text || "", ...extra }]);
               if (!res.text && kind !== "image") toast({ type: "info", title: f.name + " attached", desc: res.note || "no text extracted" });
             })
             .catch(() => toast({ type: "error", title: "Attach failed", desc: f.name }));
@@ -3826,7 +3910,7 @@ Object.assign(window, {
     const attachFile = () => fileInputRef.current && fileInputRef.current.click();
     const composerProps = {
       value: draft, onChange: setDraft, onSend: () => send(), onStop: stopStream, streaming: !!streaming,
-      attachments, onAttach: attachFile, onRemoveAttach: (i) => setAttachments((x) => x.filter((_, j) => j !== i)),
+      attachments, onAttach: attachFile, onFiles: onFilesPicked, onRemoveAttach: (i) => setAttachments((x) => x.filter((_, j) => j !== i)),
       focusKey,
       placeholder: active ? "Reply to Hermes…" : "Message Hermes…",
     };

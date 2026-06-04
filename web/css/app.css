@@ -309,7 +309,9 @@ body.no-anim *::after {
 .thread { max-width: var(--content-max); margin: 0 auto; padding: 18px 24px 8px; font-size: var(--content-fs, 15.5px); }
 
 .turn { margin: 4px 0 22px; }
-.turn.user { display: flex; justify-content: flex-end; }
+.turn.user { display: flex; flex-direction: column; align-items: flex-end; }
+.user-images { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-bottom: 6px; max-width: 78%; }
+.user-images img { max-width: 240px; max-height: 240px; border-radius: 14px; object-fit: cover; border: 1px solid var(--border); display: block; }
 .user-bubble {
   background: var(--user-bubble); padding: 10px 15px; border-radius: 18px;
   max-width: 78%; white-space: pre-wrap; word-break: break-word; line-height: 1.55;
@@ -436,6 +438,10 @@ body.no-anim *::after {
   padding: 8px 8px 8px 8px;
 }
 .composer.focused { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-ring), var(--shadow-md); }
+.composer { position: relative; }
+.composer.drag { border-color: var(--accent); border-style: dashed; box-shadow: 0 0 0 4px var(--accent-ring), var(--shadow-md); }
+.composer .drop-veil { position: absolute; inset: 0; z-index: 5; border-radius: var(--r-xl); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px;
+  background: color-mix(in srgb, var(--field-bg) 86%, transparent); color: var(--accent-deep); font-size: 13.5px; font-weight: 600; pointer-events: none; backdrop-filter: blur(1px); }
 
 .attach-chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 6px 6px 2px; }
 .chip {
@@ -443,7 +449,8 @@ body.no-anim *::after {
   background: var(--field-bg-2); border: 1px solid var(--border); font-size: 12.5px; max-width: 220px;
   animation: popIn .22s var(--ease-spring) both;
 }
-.chip .thumb { width: 34px; height: 34px; border-radius: 7px; object-fit: cover; flex: 0 0 auto; background: var(--accent-soft); display: grid; place-items: center; color: var(--accent-deep); }
+.chip .thumb { width: 34px; height: 34px; border-radius: 7px; object-fit: cover; flex: 0 0 auto; background: var(--accent-soft); display: grid; place-items: center; color: var(--accent-deep); overflow: hidden; }
+.chip .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .chip .meta { min-width: 0; }
 .chip .meta .nm { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chip .meta .sz { color: var(--text-3); font-size: 11px; }
@@ -610,7 +617,22 @@ textarea.field { resize: vertical; min-height: 90px; line-height: 1.55; }
 .pop-head { padding: 10px 11px 8px; display: flex; align-items: center; gap: 10px; }
 
 /* model dropdown */
-.model-menu { min-width: 320px; }
+.model-menu { min-width: 320px; padding: 6px; }
+/* search + collapsible provider groups (handles hundreds of agent models) */
+.mm-search { display: flex; align-items: center; gap: 8px; padding: 7px 10px; margin: 2px 2px 6px; border-radius: 10px; background: var(--hover); color: var(--text-3); }
+.mm-search .mm-input { flex: 1; border: 0; background: transparent; outline: none; font-size: 13.5px; color: var(--text-1); }
+.mm-search .mm-clear { color: var(--text-3); display: grid; place-items: center; padding: 2px; border-radius: 6px; }
+.mm-search .mm-clear:hover { background: var(--border); color: var(--text-1); }
+.mm-scroll { max-height: min(56vh, 460px); overflow-y: auto; overscroll-behavior: contain; }
+.mm-empty { padding: 18px 12px; text-align: center; color: var(--text-3); font-size: 13px; }
+.mm-group { margin-bottom: 2px; }
+.mm-head { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; padding: 8px 10px; border-radius: 9px; color: var(--text-2); transition: background .12s; }
+.mm-head:hover { background: var(--hover); }
+.mm-head .mm-head-ic { width: 22px; height: 22px; border-radius: 7px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-deep); flex: 0 0 auto; }
+.mm-head .mm-head-name { font-weight: 680; font-size: 12px; letter-spacing: .03em; text-transform: uppercase; color: var(--text-2); }
+.mm-head .mm-head-count { font-size: 11px; font-weight: 650; color: var(--text-3); background: var(--hover); padding: 1px 7px; border-radius: 999px; }
+.mm-head .mm-head-chev { margin-left: auto; color: var(--text-3); display: grid; place-items: center; }
+.mm-group .model-opt { padding-left: 16px; }
 .model-opt { display: flex; align-items: flex-start; gap: 11px; width: 100%; text-align: left; padding: 10px 11px; border-radius: 9px; transition: background .13s; }
 .model-opt:hover { background: var(--hover); }
 .model-opt.sel { background: var(--accent-softer); }

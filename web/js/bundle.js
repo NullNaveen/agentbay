@@ -459,7 +459,17 @@
     openrouter: "Layers",
     mistral: "Bot",
     nous: "Gift",
-    local: "Server"
+    local: "Server",
+    agent: "Bot"
+  };
+  // When every model runs through the on-device agent they share provider "agent";
+  // pick the icon from the underlying provider label instead.
+  const LABEL_ICON = {
+    "Nous Portal": "Gift",
+    "AWS Bedrock": "Layers",
+    "GitHub Copilot": "Sparkle",
+    "Custom endpoint": "Server",
+    "On this device": "Server"
   };
   const MODELS = []; // mutated in place by refreshModels() so references hold
   function refreshModels() {
@@ -467,9 +477,10 @@
       MODELS.length = 0;
       (d.models || []).forEach(m => MODELS.push({
         id: m.provider + "::" + m.model,
-        name: m.model,
+        name: m.label || m.model,
         desc: m.provider_label,
-        icon: PROVIDER_ICON[m.provider] || "Bot",
+        group: m.provider_label || "Models",
+        icon: LABEL_ICON[m.provider_label] || PROVIDER_ICON[m.provider] || "Bot",
         provider: m.provider,
         model: m.model
       }));
@@ -1769,9 +1780,16 @@ That's a lot of water for a moon smaller than ours.`;
         return /*#__PURE__*/React.createElement("div", {
           className: "turn user anim-fadeup",
           key: i
-        }, /*#__PURE__*/React.createElement("div", {
+        }, m.images && m.images.length > 0 && /*#__PURE__*/React.createElement("div", {
+          className: "user-images"
+        }, m.images.map((im, k) => /*#__PURE__*/React.createElement("img", {
+          key: k,
+          src: im.b64,
+          alt: im.name || "image",
+          loading: "lazy"
+        }))), m.content ? /*#__PURE__*/React.createElement("div", {
           className: "user-bubble"
-        }, m.content));
+        }, m.content) : null);
       }
       const isStreamingThis = streaming && isLast;
       const liveMsg = isStreamingThis ? {
@@ -1861,6 +1879,7 @@ That's a lot of water for a moon smaller than ours.`;
     attachments,
     onAttach,
     onRemoveAttach,
+    onFiles,
     placeholder,
     suggestChips,
     onSuggestChip,
@@ -1870,6 +1889,7 @@ That's a lot of water for a moon smaller than ours.`;
     const taRef = useRef(null);
     const [focused, setFocused] = useState(false);
     const [launching, setLaunching] = useState(false);
+    const [drag, setDrag] = useState(false);
     const autosize = () => {
       const t = taRef.current;
       if (!t) return;
@@ -1895,20 +1915,58 @@ That's a lot of water for a moon smaller than ours.`;
         doSend();
       }
     };
+    // Paste an image (screenshot / copied picture) straight into the chat. Only
+    // intercept a PURE-image paste so normal text/rich paste still works.
+    const onPaste = e => {
+      if (!onFiles) return;
+      const items = Array.from(e.clipboardData && e.clipboardData.items || []);
+      const imgs = items.filter(i => i.kind === "file" && /^image\//.test(i.type));
+      const hasText = items.some(i => i.kind === "string");
+      if (!imgs.length || hasText) return;
+      e.preventDefault();
+      const files = imgs.map(i => i.getAsFile()).filter(Boolean);
+      if (files.length) onFiles(files);
+    };
+    const onDrop = e => {
+      if (!onFiles) return;
+      e.preventDefault();
+      setDrag(false);
+      const files = Array.from(e.dataTransfer && e.dataTransfer.files || []);
+      if (files.length) onFiles(files);
+    };
+    const onDragOver = e => {
+      if (onFiles && e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files")) {
+        e.preventDefault();
+        setDrag(true);
+      }
+    };
+    const onDragLeave = e => {
+      if (e.currentTarget === e.target) setDrag(false);
+    };
     return /*#__PURE__*/React.createElement("div", {
       className: "composer-wrap"
     }, /*#__PURE__*/React.createElement("div", {
       className: "composer-inner"
     }, /*#__PURE__*/React.createElement("div", {
-      className: "composer" + (focused ? " focused" : "")
-    }, attachments.length > 0 && /*#__PURE__*/React.createElement("div", {
+      className: "composer" + (focused ? " focused" : "") + (drag ? " drag" : ""),
+      onDrop: onDrop,
+      onDragOver: onDragOver,
+      onDragLeave: onDragLeave
+    }, drag && /*#__PURE__*/React.createElement("div", {
+      className: "drop-veil"
+    }, /*#__PURE__*/React.createElement(I.Image, {
+      size: 22
+    }), /*#__PURE__*/React.createElement("span", null, "Drop images or files to attach")), attachments.length > 0 && /*#__PURE__*/React.createElement("div", {
       className: "attach-chips"
     }, attachments.map((a, i) => /*#__PURE__*/React.createElement("div", {
-      className: "chip",
+      className: "chip" + (a.kind === "image" ? " img" : ""),
       key: i
     }, /*#__PURE__*/React.createElement("span", {
       className: "thumb"
-    }, a.kind === "image" ? /*#__PURE__*/React.createElement(I.Image, {
+    }, a.kind === "image" && a.b64 ? /*#__PURE__*/React.createElement("img", {
+      src: a.b64,
+      alt: a.name
+    }) : a.kind === "image" ? /*#__PURE__*/React.createElement(I.Image, {
       size: 16
     }) : /*#__PURE__*/React.createElement(I.FileText, {
       size: 16
@@ -1931,6 +1989,7 @@ That's a lot of water for a moon smaller than ours.`;
       placeholder: placeholder || "Message Hermes…",
       onChange: e => onChange(e.target.value),
       onKeyDown: onKey,
+      onPaste: onPaste,
       onFocus: () => setFocused(true),
       onBlur: () => setFocused(false),
       "aria-label": "Message"
@@ -2856,7 +2915,7 @@ That's a lot of water for a moon smaller than ours.`;
         borderRadius: 9,
         background: ready ? "var(--green)" : "var(--amber)"
       }
-    }), ready ? "On-device agent is ready — chat runs on this computer, with tools." : "On-device agent not active"), !ready && /*#__PURE__*/React.createElement("div", {
+    }), ready ? "Agent ready — every model you pick runs here, with tools (terminal, web, files)." : "On-device agent not active"), !ready && /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 12.5,
         color: "var(--text-2)",
@@ -5338,42 +5397,110 @@ That's a lot of water for a moon smaller than ours.`;
     onPick,
     onSetDefault
   }) {
+    const [q, setQ] = React.useState("");
+    const all = D.MODELS;
+    const ql = q.trim().toLowerCase();
+    const matches = ql ? all.filter(m => (m.name + " " + (m.desc || "")).toLowerCase().includes(ql)) : all;
+    // group, preserving first-seen provider order
+    const order = [];
+    const gmap = {};
+    matches.forEach(m => {
+      const g = m.group || "Models";
+      if (!gmap[g]) {
+        gmap[g] = [];
+        order.push(g);
+      }
+      gmap[g].push(m);
+    });
+    const curMeta = all.find(m => m.id === current);
+    const [open, setOpen] = React.useState({});
+    const isOpen = g => {
+      if (ql) return true;
+      if (g in open) return open[g];
+      if (curMeta && curMeta.group === g) return true;
+      return (gmap[g] || []).length <= 3 || order.length === 1;
+    };
     return /*#__PURE__*/React.createElement(Popover, {
       anchorRef: anchorRef,
       onClose: onClose,
       align: "left",
       className: "model-menu",
-      width: 330
-    }, D.MODELS.map(m => {
-      const Ic = I[m.icon] || I.Bot;
-      return /*#__PURE__*/React.createElement("button", {
-        key: m.id,
-        className: "model-opt" + (m.id === current ? " sel" : ""),
-        onClick: () => {
-          onClose();
-          onPick(m.id);
-        }
+      width: 368
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "mm-search"
+    }, /*#__PURE__*/React.createElement(I.Search, {
+      size: 15
+    }), /*#__PURE__*/React.createElement("input", {
+      autoFocus: true,
+      className: "mm-input",
+      placeholder: "Search models\u2026",
+      value: q,
+      onChange: e => setQ(e.target.value)
+    }), q && /*#__PURE__*/React.createElement("button", {
+      className: "mm-clear",
+      onClick: () => setQ(""),
+      "aria-label": "Clear"
+    }, /*#__PURE__*/React.createElement(I.X, {
+      size: 14
+    }))), /*#__PURE__*/React.createElement("div", {
+      className: "mm-scroll"
+    }, order.length === 0 && /*#__PURE__*/React.createElement("div", {
+      className: "mm-empty"
+    }, "No models match \u201C", q, "\u201D."), order.map(g => {
+      const items = gmap[g];
+      const exp = isOpen(g);
+      const GIc = I[items[0] && items[0].icon] || I.Bot;
+      return /*#__PURE__*/React.createElement("div", {
+        key: g,
+        className: "mm-group"
+      }, /*#__PURE__*/React.createElement("button", {
+        className: "mm-head",
+        onClick: () => setOpen(o => Object.assign({}, o, {
+          [g]: !exp
+        }))
       }, /*#__PURE__*/React.createElement("span", {
-        className: "mo-icon"
-      }, /*#__PURE__*/React.createElement(Ic, {
-        size: 16
+        className: "mm-head-ic"
+      }, /*#__PURE__*/React.createElement(GIc, {
+        size: 15
       })), /*#__PURE__*/React.createElement("span", {
-        style: {
-          flex: 1,
-          minWidth: 0
-        }
-      }, /*#__PURE__*/React.createElement("span", {
-        className: "mo-name"
-      }, m.name, m.id === defaultModel && /*#__PURE__*/React.createElement("span", {
-        className: "tag-mini"
-      }, "Default")), /*#__PURE__*/React.createElement("span", {
-        className: "mo-desc"
-      }, m.desc)), m.id === current && /*#__PURE__*/React.createElement("span", {
-        className: "check"
-      }, /*#__PURE__*/React.createElement(I.Check, {
-        size: 17
-      })));
-    }), /*#__PURE__*/React.createElement("div", {
+        className: "mm-head-name"
+      }, g), /*#__PURE__*/React.createElement("span", {
+        className: "mm-head-count"
+      }, items.length), /*#__PURE__*/React.createElement("span", {
+        className: "mm-head-chev"
+      }, exp ? /*#__PURE__*/React.createElement(I.ChevronDown, {
+        size: 15
+      }) : /*#__PURE__*/React.createElement(I.ChevronRight, {
+        size: 15
+      }))), exp && items.map(m => {
+        const Ic = I[m.icon] || I.Bot;
+        return /*#__PURE__*/React.createElement("button", {
+          key: m.id,
+          className: "model-opt" + (m.id === current ? " sel" : ""),
+          onClick: () => {
+            onClose();
+            onPick(m.id);
+          }
+        }, /*#__PURE__*/React.createElement("span", {
+          className: "mo-icon"
+        }, /*#__PURE__*/React.createElement(Ic, {
+          size: 16
+        })), /*#__PURE__*/React.createElement("span", {
+          style: {
+            flex: 1,
+            minWidth: 0
+          }
+        }, /*#__PURE__*/React.createElement("span", {
+          className: "mo-name"
+        }, m.name, m.id === defaultModel && /*#__PURE__*/React.createElement("span", {
+          className: "tag-mini"
+        }, "Default"))), m.id === current && /*#__PURE__*/React.createElement("span", {
+          className: "check"
+        }, /*#__PURE__*/React.createElement(I.Check, {
+          size: 17
+        })));
+      }));
+    })), /*#__PURE__*/React.createElement("div", {
       className: "pop-divider"
     }), /*#__PURE__*/React.createElement("button", {
       className: "pop-item",
@@ -7274,6 +7401,7 @@ Object.assign(window, {
     // The store lives with the AgentBay instance; we merge by id (newest `updated`
     // wins) and honour tombstones, so a teammate's chats show up and deletes stick.
     const syncSnap = useRef(new Map()); // id -> JSON(content w/o `updated`) at last sync
+    const streamingSidRef = useRef(null); // session with an in-flight turn — sync must never clobber it
     const syncReady = useRef(false);
     const sessionsLive = useRef(sessions);
     useEffect(() => {
@@ -7306,6 +7434,7 @@ Object.assign(window, {
         (srv || []).forEach(raw => {
           const s = _normSession(raw);
           if (!s || !s.id || delSet.has(s.id)) return;
+          if (s.id === streamingSidRef.current) return; // never overwrite a session mid-stream (would drop the live reply)
           const loc = byId.get(s.id);
           if (!loc || (s.updated || 0) > (loc.updated || 0)) {
             byId.set(s.id, s);
@@ -7331,7 +7460,7 @@ Object.assign(window, {
       const t = setTimeout(() => {
         const now = Date.now();
         let bumped = false;
-        const payload = sessionsLive.current.map(s => {
+        const payload = sessionsLive.current.filter(s => s.id !== streamingSidRef.current).map(s => {
           if (syncSnap.current.get(s.id) !== _sansUpd(s)) {
             bumped = true;
             return Object.assign({}, s, {
@@ -7461,8 +7590,12 @@ Object.assign(window, {
     const refreshModels = React.useCallback(() => D.refreshModels().then(list => {
       setModelsTick(t => t + 1);
       const ids = list.map(m => m.id);
-      setHomeModel(hm => hm && ids.includes(hm) ? hm : ids[0] || "");
-      setDefaultModel(dm => dm && ids.includes(dm) ? dm : ids[0] || "");
+      // Default to the first REAL provider model (we only list authenticated
+      // providers, so it works out of the box) rather than "agent::default",
+      // whose Hermes config may be unset → "No inference provider configured".
+      const firstReal = ids.find(id => id !== "agent::default") || ids[0] || "";
+      setHomeModel(hm => hm && ids.includes(hm) ? hm : firstReal);
+      setDefaultModel(dm => dm && ids.includes(dm) ? dm : firstReal);
     }), []);
     useEffect(() => {
       refreshModels();
@@ -7542,6 +7675,9 @@ Object.assign(window, {
     useEffect(() => {
       sessionsRef.current = sessions;
     }, [sessions]);
+    useEffect(() => {
+      streamingSidRef.current = streaming ? streaming.sessionId : null;
+    }, [streaming]);
 
     // overlays
     const [modal, setModal] = useState(null); // {kind, data}
@@ -7663,7 +7799,7 @@ Object.assign(window, {
       };
       step();
     };
-    const startStream = (sessionId, prompt, model) => {
+    const startStream = (sessionId, prompt, model, images) => {
       const followups = []; // real, relevant follow-ups are fetched after the reply (if enabled)
       // push empty assistant msg
       setSessions(ss => ss.map(s => s.id === sessionId ? {
@@ -7725,7 +7861,8 @@ Object.assign(window, {
         messages: history,
         provider: provId || undefined,
         model: modelName || undefined,
-        session_id: sessionId
+        session_id: sessionId,
+        images: images && images.length ? images : undefined
       });
 
       // Live streaming: render tokens + the agent's thinking + tool calls as they
@@ -7929,11 +8066,24 @@ Object.assign(window, {
     const send = text => {
       const typed = (text != null ? text : draft).trim();
       if (!typed && attachments.length === 0) return;
-      // Fold attached file contents into the message the model actually receives.
+      // Images are sent to the (multimodal) agent as real data — capture them now
+      // (state clears before startStream runs) and show them in the user's bubble.
+      const images = attachments.filter(a => a.kind === "image" && a.b64).map(a => ({
+        mime: a.mime,
+        b64: a.b64,
+        name: a.name
+      }));
+      // Fold attached TEXT file contents into the message; only non-image, non-text
+      // files are listed "by name only" (images travel as image data, not a note).
       const textParts = attachments.filter(a => a.text).map(a => "\n\n--- Attached file: " + a.name + " ---\n" + a.text);
-      const named = attachments.filter(a => !a.text).map(a => a.name);
+      const named = attachments.filter(a => !a.text && a.kind !== "image").map(a => a.name);
       const body = typed + textParts.join("") + (named.length ? "\n\n[Attached (by name only): " + named.join(", ") + "]" : "");
       const title = (typed || attachments[0] && attachments[0].name || "New chat").slice(0, 40);
+      const userMsg = {
+        role: "user",
+        content: body
+      };
+      if (images.length) userMsg.images = images;
       let sid = activeId;
       if (!active) {
         sid = uid();
@@ -7947,10 +8097,7 @@ Object.assign(window, {
           updated: Date.now(),
           projectId: composerProject || null,
           agentId: composerAgent || null,
-          messages: [{
-            role: "user",
-            content: body
-          }]
+          messages: [userMsg]
         };
         setSessions(ss => [newS, ...ss]);
         setActiveId(sid);
@@ -7962,17 +8109,14 @@ Object.assign(window, {
       } else {
         setSessions(ss => ss.map(s => s.id === sid ? {
           ...s,
-          messages: [...s.messages, {
-            role: "user",
-            content: body
-          }],
+          messages: [...s.messages, userMsg],
           updated: Date.now()
         } : s));
       }
       setDraft("");
       setAttachments([]);
       const model = active ? active.model : homeModel;
-      setTimeout(() => startStream(sid, body, model), 60);
+      setTimeout(() => startStream(sid, body, model, images), 60);
     };
 
     /* ---- start a chat scoped to a project / agent ---- */
@@ -8121,11 +8265,17 @@ Object.assign(window, {
               b64: String(fr.result)
             })
           }).then(r => r.json()).then(res => {
+            // Keep image bytes so they're sent to the (multimodal) agent, not just shown.
+            const extra = kind === "image" ? {
+              b64: String(fr.result),
+              mime: f.type || "image/png"
+            } : {};
             setAttachments(x => [...x, {
               name: f.name,
               size: fmtSize(f.size),
               kind,
-              text: res.text || ""
+              text: res.text || "",
+              ...extra
             }]);
             if (!res.text && kind !== "image") toast({
               type: "info",
@@ -8150,6 +8300,7 @@ Object.assign(window, {
       streaming: !!streaming,
       attachments,
       onAttach: attachFile,
+      onFiles: onFilesPicked,
       onRemoveAttach: i => setAttachments(x => x.filter((_, j) => j !== i)),
       focusKey,
       placeholder: active ? "Reply to Hermes…" : "Message Hermes…"
