@@ -310,7 +310,7 @@ body.no-anim *::after {
 
 .turn { margin: 4px 0 22px; }
 .turn.user { display: flex; flex-direction: column; align-items: flex-end; }
-.turn.user .user-row { display: flex; align-items: center; gap: 6px; max-width: 100%; }
+.turn.user .user-row { display: flex; align-items: center; gap: 6px; max-width: 78%; }
 .user-edit-btn { opacity: 0; flex: 0 0 auto; color: var(--text-3); padding: 5px; border-radius: 7px; transition: opacity .12s, background .12s; }
 .turn.user:hover .user-edit-btn { opacity: 1; }
 .user-edit-btn:hover { background: var(--hover); color: var(--text-1); }
@@ -323,7 +323,7 @@ body.no-anim *::after {
 .user-images img { max-width: 240px; max-height: 240px; border-radius: 14px; object-fit: cover; border: 1px solid var(--border); display: block; }
 .user-bubble {
   background: var(--user-bubble); padding: 10px 15px; border-radius: 18px;
-  max-width: 78%; white-space: pre-wrap; word-break: break-word; line-height: 1.55;
+  max-width: 100%; white-space: pre-wrap; overflow-wrap: break-word; line-height: 1.55;
 }
 .bubbles-off .user-bubble { background: transparent; padding: 10px 0; max-width: 100%; }
 
