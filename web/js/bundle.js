@@ -2553,43 +2553,6 @@ That's a lot of water for a moon smaller than ours.`;
         }
       }, "FREE"), "tag for no-cost tiers."), /*#__PURE__*/React.createElement("div", {
         style: {
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          marginTop: 12,
-          padding: "10px 12px",
-          border: "1px solid var(--border)",
-          borderRadius: 11,
-          background: "var(--surface)"
-        }
-      }, /*#__PURE__*/React.createElement("span", {
-        style: {
-          color: "var(--accent-deep)",
-          display: "inline-flex"
-        }
-      }, /*#__PURE__*/React.createElement(I.Gift, {
-        size: 18
-      })), /*#__PURE__*/React.createElement("div", {
-        style: {
-          flex: 1,
-          minWidth: 0
-        }
-      }, /*#__PURE__*/React.createElement("div", {
-        style: {
-          fontWeight: 620,
-          fontSize: 13.5
-        }
-      }, "Already set up in your agent?"), /*#__PURE__*/React.createElement("div", {
-        style: {
-          fontSize: 12,
-          color: "var(--text-3)"
-        }
-      }, "Pull every provider your agent already has (Nous Portal, custom endpoints, \u2026) \u2014 no re-entering keys.")), /*#__PURE__*/React.createElement("button", {
-        className: "btn btn-outline",
-        disabled: syncing,
-        onClick: syncAgent
-      }, syncing ? "Syncing…" : "Sync from agent")), /*#__PURE__*/React.createElement("div", {
-        style: {
           display: "grid",
           gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
           gap: 12,

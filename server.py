@@ -336,23 +336,22 @@ def public_config(cfg):
 
 
 def enabled_models(cfg):
-    """The models the user has added in Settings → Providers — this drives the top
-    dropdown and is the ONLY source. Empty until the user saves a provider there.
+    """The models the user EXPLICITLY added in Settings → Providers — this is the
+    ONLY source for the top dropdown. Empty until the user saves a provider there.
 
-    When a local Hermes agent is present (standalone), every one of these runs
-    THROUGH the agent (real tools, terminal, files) using that provider+model as
-    its brain — not a plain chatbot. The provider's saved key is handed to the
-    agent at run time (see _agent_route). Without an agent (EC2), they route
-    through the gateway. Either way: only what the user configured shows up."""
+    Providers that were auto-imported from the agent (marked `from_agent`) are NOT
+    shown — the user only wants to see what they configured themselves. Each shown
+    provider still routes THROUGH the agent (tools/terminal) using that provider+
+    model as its brain; its saved key is handed to the agent at run time."""
     out = []
     for pid, p in (cfg.get("providers") or {}).items():
         if not isinstance(p, dict):
             continue
+        if p.get("from_agent"):
+            continue                          # auto-imported from the agent → don't clutter the dropdown
         spec = PROVIDERS.get(pid, {})
-        # Agent-imported providers (Nous Portal OAuth, custom endpoints, …) carry no
-        # key here — the agent already holds the creds — so don't skip them.
-        if spec.get("needs_key") and not p.get("key") and not p.get("from_agent"):
-            continue
+        if spec.get("needs_key") and not p.get("key"):
+            continue                          # needs a key but none saved → nothing to show
         plabel = spec.get("label") or p.get("label") or pid
         for m in (p.get("models") or []):
             if m:
@@ -3701,23 +3700,9 @@ def main():
         create_desktop_launcher()
     threading.Thread(target=_maybe_shortcut, daemon=True).start()
 
-    # Auto-import the user's agent (Hermes) providers ONCE so they never reconfigure
-    # what the agent already has (Nous Portal OAuth, custom endpoints, …). After
-    # this, Settings → Providers has a manual "Sync from agent" to refresh.
-    _seed_flag = CONFIG_DIR / ".agent_providers_imported"
-    if _agent_kind(load_config()) and not _seed_flag.exists():
-        def _seed_providers():
-            try:
-                upd, ids = _import_agent_providers()
-                if upd:
-                    save_config(upd)
-                CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-                _seed_flag.write_text("1")
-                if ids:
-                    print(f"  [providers] imported {len(ids)} from your agent: {', '.join(ids)}")
-            except Exception as e:
-                print(f"  [providers] agent import skipped: {e}")
-        threading.Thread(target=_seed_providers, daemon=True).start()
+    # NOTE: we no longer auto-import the agent's whole provider catalog — the user
+    # wants the dropdown to show ONLY the providers they add in Settings → Providers.
+    # (The /api/providers/sync-agent endpoint still exists if it's ever needed.)
 
     # Onboarding: make the share-link tool available on every machine (any OS).
     # One-time, in the background, only if missing — so "Remote access" just works.

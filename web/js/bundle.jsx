@@ -1258,14 +1258,6 @@ That's a lot of water for a moon smaller than ours.`;
             <span style={{ fontSize: 10, fontWeight: 700, color: "var(--green)", border: "1px solid var(--green)", borderRadius: 6, padding: "1px 5px", margin: "0 4px" }}>FREE</span>
             tag for no-cost tiers.
           </p>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12, padding: "10px 12px", border: "1px solid var(--border)", borderRadius: 11, background: "var(--surface)" }}>
-            <span style={{ color: "var(--accent-deep)", display: "inline-flex" }}><I.Gift size={18} /></span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 620, fontSize: 13.5 }}>Already set up in your agent?</div>
-              <div style={{ fontSize: 12, color: "var(--text-3)" }}>Pull every provider your agent already has (Nous Portal, custom endpoints, …) — no re-entering keys.</div>
-            </div>
-            <button className="btn btn-outline" disabled={syncing} onClick={syncAgent}>{syncing ? "Syncing…" : "Sync from agent"}</button>
-          </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12, marginTop: 14 }}>
             {PROV_ORDER.map((pid) => {
               const p = provs[pid], en = enabled[pid] || [], Ic = I[PIC[pid]] || I.Bot;
