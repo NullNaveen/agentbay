@@ -2164,6 +2164,50 @@ def _acp_available():
     return bool(which("hermes"))
 
 
+_REASONING_EFFORTS = ("minimal", "low", "medium", "high", "xhigh")
+
+
+def _hermes_config_path():
+    h = os.environ.get("HERMES_HOME") or os.path.join(str(Path.home()), ".hermes")
+    return Path(h) / "config.yaml"
+
+
+def get_reasoning_effort():
+    """Read the Hermes agent's global reasoning effort (agent.reasoning_effort).
+    '' / missing → default (the model decides). ACP turns honor this."""
+    p = _hermes_config_path()
+    try:
+        import yaml
+        d = yaml.safe_load(p.read_text()) or {}
+        return str((d.get("agent") or {}).get("reasoning_effort") or "")
+    except Exception:
+        # tolerate no-PyYAML / unreadable config — fall back to a tiny regex
+        try:
+            txt = p.read_text()
+            m = re.search(r"reasoning_effort:\s*['\"]?(\w*)", txt)
+            return (m.group(1) if m else "") or ""
+        except Exception:
+            return ""
+
+
+def set_reasoning_effort(effort):
+    """Set the Hermes agent's global reasoning effort via the CLI. '' clears it
+    (back to the model default). Returns (ok, message). This is a GLOBAL agent
+    setting — it affects the user's Hermes everywhere, not just AgentBay."""
+    effort = (effort or "").strip().lower()
+    if effort and effort not in _REASONING_EFFORTS:
+        return False, "invalid effort"
+    hb = which("hermes")
+    if not hb:
+        return False, "hermes not found"
+    try:
+        r = subprocess.run([hb, "config", "set", "agent.reasoning_effort", effort],
+                           capture_output=True, text=True, timeout=20, env=_agent_env())
+        return (r.returncode == 0), ((r.stdout or r.stderr or "").strip()[:200])
+    except Exception as e:
+        return False, str(e)[:200]
+
+
 def _agent_kind(cfg=None):
     """Which local agent backs chat: 'hermes' (driven via ACP) or 'openclaw' (driven
     via the openclaw CLI). None on multi-user EC2 (gateway) or when neither is
@@ -2568,6 +2612,9 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=N
                     # the agent's live task plan (todo list) — full state each time
                     yield ("plan", [{"content": _ANSI_RE.sub("", str(e.get("content") or "")), "status": e.get("status") or "pending"}
                                     for e in (u.get("entries") or []) if isinstance(e, dict)])
+                elif t == "usage_update":
+                    # ACP native context usage: used tokens / context-window size
+                    yield ("usage", {"used": int(u.get("used") or 0), "size": int(u.get("size") or 0)})
                 continue
             if "result" in m or "error" in m:
                 if mid == st.get("init"):
@@ -3342,6 +3389,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"profiles": list_hermes_profiles(), "active": cfg.get("agent_profile") or ""})
         if path == "/api/agent-debug":
             return self._send(200, agent_debug())
+        if path == "/api/agent/reasoning-effort":
+            return self._send(200, {"effort": get_reasoning_effort(), "options": list(_REASONING_EFFORTS),
+                                    "available": _agent_kind(load_config()) == "hermes"})
         if path == "/api/import/sessions":
             try:
                 return self._send(200, {"sessions": read_agent_sessions()})
@@ -3515,7 +3565,7 @@ class Handler(BaseHTTPRequestHandler):
             msgs = data.get("messages") or []
             is_agent, model_id, images, env, kind = _agent_route(cfg, data)
             if is_agent:
-                reply, reasoning, tools, plan = "", "", [], []
+                reply, reasoning, tools, plan, usage = "", "", [], [], {}
                 t0 = time.time()
                 for ev, payload in local_agent_stream(msgs, data.get("session_id"), model_id, images, env, kind):
                     if ev == "token":
@@ -3530,10 +3580,12 @@ class Handler(BaseHTTPRequestHandler):
                         tools[idx] = payload
                     elif ev == "plan":
                         plan = payload  # full state each emission — keep the latest
+                    elif ev == "usage":
+                        usage = payload  # latest context-usage snapshot
                     elif ev == "error":
                         reply = reply or ("⚠ " + str(payload))
                 return self._send(200, {"reply": reply, "agent": True, "model": data.get("model") or "hermes-agent",
-                                        "reasoning": reasoning, "tools": tools, "plan": plan,
+                                        "reasoning": reasoning, "tools": tools, "plan": plan, "usage": usage,
                                         "latency_ms": int((time.time() - t0) * 1000)})
             res = chat_complete(cfg, msgs, provider=data.get("provider"), model=data.get("model"), session_id=data.get("session_id"))
             threading.Thread(target=langfuse_log,
@@ -3585,6 +3637,9 @@ class Handler(BaseHTTPRequestHandler):
             # Real Stop — cancel the in-flight agent turn for this session.
             stopped = _cancel_turn(data.get("session_id"))
             return self._send(200, {"stopped": bool(stopped)})
+        if path == "/api/agent/reasoning-effort":
+            ok, msg = set_reasoning_effort(data.get("effort"))
+            return self._send(200 if ok else 400, {"ok": ok, "effort": get_reasoning_effort(), "message": msg})
         if path == "/api/followups":
             cfg = load_config()
             res = gen_followups(cfg, data.get("messages") or [], provider=data.get("provider"), model=data.get("model"))

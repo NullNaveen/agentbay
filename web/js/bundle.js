@@ -1779,7 +1779,25 @@ That's a lot of water for a moon smaller than ours.`;
         title: meta.name,
         desc: "Generated in " + (msg.thought || 3) + "s · ~" + Math.max(1, Math.round(msg.content.length / 4)) + " tokens"
       })
-    }), !streaming && isLast && msg.followups && msg.followups.length > 0 && /*#__PURE__*/React.createElement("div", {
+    }), !streaming && msg.usage && msg.usage.size > 0 ? (() => {
+      const fmtTok = n => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k" : String(n);
+      const pct = Math.min(100, Math.round(msg.usage.used / msg.usage.size * 100));
+      return /*#__PURE__*/React.createElement("div", {
+        className: "usage-meter" + (pct >= 85 ? " usage-high" : ""),
+        title: "Context window: " + msg.usage.used.toLocaleString() + " / " + msg.usage.size.toLocaleString() + " tokens (" + pct + "%)"
+      }, /*#__PURE__*/React.createElement(I.Database, {
+        size: 11
+      }), /*#__PURE__*/React.createElement("span", {
+        className: "usage-txt"
+      }, fmtTok(msg.usage.used), " / ", fmtTok(msg.usage.size), " ctx"), /*#__PURE__*/React.createElement("span", {
+        className: "usage-bar"
+      }, /*#__PURE__*/React.createElement("span", {
+        className: "usage-fill",
+        style: {
+          width: pct + "%"
+        }
+      })));
+    })() : null, !streaming && isLast && msg.followups && msg.followups.length > 0 && /*#__PURE__*/React.createElement("div", {
       className: "followups anim-fadein"
     }, /*#__PURE__*/React.createElement("div", {
       className: "followups-h"
@@ -1931,7 +1949,8 @@ That's a lot of water for a moon smaller than ours.`;
         content: streaming.text,
         reasoning: streaming.reasoning || m.reasoning,
         tools: streaming.tools && streaming.tools.length ? streaming.tools : m.tools,
-        plan: streaming.plan && streaming.plan.length ? streaming.plan : m.plan
+        plan: streaming.plan && streaming.plan.length ? streaming.plan : m.plan,
+        usage: streaming.usage || m.usage
       } : m;
       return /*#__PURE__*/React.createElement(AssistantTurn, {
         key: i,
@@ -3291,9 +3310,68 @@ That's a lot of water for a moon smaller than ours.`;
       }
     }, log), /*#__PURE__*/React.createElement(AgentProfilesCard, {
       onToast: onToast
+    }), /*#__PURE__*/React.createElement(ReasoningEffortCard, {
+      onToast: onToast
     }), /*#__PURE__*/React.createElement(BrowserUseCard, {
       onToast: onToast
     }));
+  }
+
+  // ---- Reasoning effort: how hard the local Hermes agent thinks (global agent default) ----
+  function ReasoningEffortCard({
+    onToast
+  }) {
+    const [state, setState] = React.useState(null); // {effort, options, available}
+    const [busy, setBusy] = React.useState(false);
+    React.useEffect(() => {
+      fetch("/api/agent/reasoning-effort").then(r => r.json()).then(setState).catch(() => {});
+    }, []);
+    if (!state || !state.available) return null; // only when the local Hermes agent (ACP) backs chat
+    const choose = effort => {
+      setBusy(true);
+      fetch("/api/agent/reasoning-effort", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          effort
+        })
+      }).then(r => r.json()).then(j => {
+        setState(s => ({
+          ...s,
+          effort: j.effort
+        }));
+        onToast && onToast({
+          type: j.ok ? "success" : "error",
+          title: j.ok ? "Reasoning effort: " + (j.effort || "default") : "Couldn't set effort"
+        });
+      }).catch(() => {}).then(() => setBusy(false));
+    };
+    const opts = [""].concat(state.options); // "" = model default
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        border: "1px solid var(--border)",
+        borderRadius: 12,
+        padding: 14,
+        marginTop: 12
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "sec-title"
+    }, "Reasoning effort"), /*#__PURE__*/React.createElement("p", {
+      style: {
+        fontSize: 12.5,
+        color: "var(--text-3)",
+        margin: "4px 0 10px"
+      }
+    }, "How hard the agent thinks before answering. Sets your Hermes agent's global default \u2014 applies everywhere Hermes runs, not just AgentBay."), /*#__PURE__*/React.createElement("div", {
+      className: "effort-seg"
+    }, opts.map(o => /*#__PURE__*/React.createElement("button", {
+      key: o || "default",
+      className: "effort-opt" + ((state.effort || "") === o ? " on" : ""),
+      disabled: busy,
+      onClick: () => choose(o)
+    }, o || "Default"))));
   }
 
   // ---- Accent color: curated "stones" that live-preview the whole app on hover ----
@@ -4492,6 +4570,23 @@ That's a lot of water for a moon smaller than ours.`;
       value: defaultModel,
       onChange: e => onDefaultModel(e.target.value)
     }, D.MODELS.map(m => /*#__PURE__*/React.createElement("option", {
+      key: m.id,
+      value: m.id
+    }, m.name)))), /*#__PURE__*/React.createElement("div", {
+      className: "set-row"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "rl"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "t"
+    }, "Fallback model"), /*#__PURE__*/React.createElement("div", {
+      className: "d"
+    }, "If a reply errors, automatically retry it once with this model.")), /*#__PURE__*/React.createElement("select", {
+      className: "mini-select",
+      value: s.fallbackModel || "",
+      onChange: e => set("fallbackModel", e.target.value)
+    }, /*#__PURE__*/React.createElement("option", {
+      value: ""
+    }, "None"), D.MODELS.map(m => /*#__PURE__*/React.createElement("option", {
       key: m.id,
       value: m.id
     }, m.name)))))), tab === "personalization" && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h3", {
@@ -7620,7 +7715,8 @@ Object.assign(window, {
     stt: "Whisper (local)",
     tts: "Browser (system)",
     showThinking: true,
-    showTools: true
+    showTools: true,
+    fallbackModel: ""
   };
   function buildUser(name) {
     const nm = (name || "").trim();
@@ -8080,8 +8176,36 @@ Object.assign(window, {
       };
       step();
     };
-    const startStream = (sessionId, prompt, model, images) => {
+    const startStream = (sessionId, prompt, model, images, isRetry) => {
       const followups = []; // real, relevant follow-ups are fetched after the reply (if enabled)
+      // Fallback model: if this attempt errors and a (different) fallback is configured,
+      // retry the same prompt once with it. Returns true when a retry was kicked off.
+      const tryFallback = () => {
+        const fb = settings.fallbackModel;
+        if (isRetry || !fb || fb === model) return false;
+        try {
+          toast({
+            type: "info",
+            title: "Primary failed — retrying with fallback model"
+          });
+        } catch (e) {}
+        setSessions(ss => ss.map(s => {
+          // swap the errored assistant turn's model label
+          if (s.id !== sessionId) return s;
+          const msgs = s.messages.slice();
+          const last = msgs[msgs.length - 1];
+          if (last && last.role === "assistant") msgs[msgs.length - 1] = {
+            ...last,
+            model: fb
+          };
+          return {
+            ...s,
+            messages: msgs
+          };
+        }));
+        startStream(sessionId, prompt, fb, images, true);
+        return true;
+      };
       // push empty assistant msg
       setSessions(ss => ss.map(s => s.id === sessionId ? {
         ...s,
@@ -8166,12 +8290,15 @@ Object.assign(window, {
           finalize(sessionId, "", followups, t0);
           return;
         }
+        const reply = d.reply || "⚠ " + (d.error || "no response from model");
+        if (reply.startsWith("⚠") && tryFallback()) return; // primary errored → fallback model
         metaRef.current[sessionId] = {
           reasoning: d.reasoning || "",
           tools: d.tools || [],
-          plan: d.plan || []
+          plan: d.plan || [],
+          usage: d.usage || null
         };
-        runTypewriter(sessionId, d.reply || "⚠ " + (d.error || "no response from model"), followups, t0);
+        runTypewriter(sessionId, reply, followups, t0);
       }).catch(e => {
         if (e && e.name === "AbortError") return;
         runTypewriter(sessionId, "⚠ " + e, followups, t0);
@@ -8199,6 +8326,7 @@ Object.assign(window, {
           reasoning = "",
           tools = [],
           plan = [],
+          usage = null,
           gotAny = false;
         const pump = extra => setStreaming({
           sessionId,
@@ -8206,6 +8334,7 @@ Object.assign(window, {
           reasoning,
           tools: tools.slice(),
           plan: plan.slice(),
+          usage,
           phase: content ? "stream" : "think",
           ...extra
         });
@@ -8251,6 +8380,9 @@ Object.assign(window, {
               } else if (ev.type === "plan") {
                 plan = Array.isArray(ev.data) ? ev.data : [];
                 pump();
+              } else if (ev.type === "usage") {
+                usage = ev.data;
+                pump();
               } else if (ev.type === "error") {
                 content = content || "⚠ " + ev.data;
                 pump();
@@ -8263,12 +8395,15 @@ Object.assign(window, {
           if (!gotAny) return fallback();
         }
         if (!gotAny) return fallback();
+        const finalContent = content || "⚠ no response from model";
+        if (finalContent.startsWith("⚠") && tryFallback()) return; // primary errored → fallback model
         metaRef.current[sessionId] = {
           reasoning,
           tools: tools.filter(Boolean),
-          plan
+          plan,
+          usage
         };
-        finalize(sessionId, content || "⚠ no response from model", followups, t0);
+        finalize(sessionId, finalContent, followups, t0);
       })();
     };
     const finalize = (sessionId, full, followups, t0) => {
@@ -8286,7 +8421,8 @@ Object.assign(window, {
           followups,
           reasoning: meta.reasoning || "",
           tools: meta.tools || [],
-          plan: meta.plan || []
+          plan: meta.plan || [],
+          usage: meta.usage || null
         };
         return {
           ...s,

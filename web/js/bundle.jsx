@@ -921,6 +921,18 @@ That's a lot of water for a moon smaller than ours.`;
             onInfo={() => onToast({ type: "info", title: meta.name, desc: "Generated in " + (msg.thought || 3) + "s · ~" + Math.max(1, Math.round(msg.content.length / 4)) + " tokens" })} />
         )}
 
+        {!streaming && msg.usage && msg.usage.size > 0 ? (() => {
+          const fmtTok = (n) => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k" : String(n);
+          const pct = Math.min(100, Math.round((msg.usage.used / msg.usage.size) * 100));
+          return (
+            <div className={"usage-meter" + (pct >= 85 ? " usage-high" : "")} title={"Context window: " + msg.usage.used.toLocaleString() + " / " + msg.usage.size.toLocaleString() + " tokens (" + pct + "%)"}>
+              <I.Database size={11} />
+              <span className="usage-txt">{fmtTok(msg.usage.used)} / {fmtTok(msg.usage.size)} ctx</span>
+              <span className="usage-bar"><span className="usage-fill" style={{ width: pct + "%" }} /></span>
+            </div>
+          );
+        })() : null}
+
         {!streaming && isLast && msg.followups && msg.followups.length > 0 && (
           <div className="followups anim-fadein">
             <div className="followups-h"><I.Sparkle size={13} /> Follow up</div>
@@ -1007,7 +1019,7 @@ That's a lot of water for a moon smaller than ours.`;
               </div>;
             }
             const isStreamingThis = streaming && isLast;
-            const liveMsg = isStreamingThis ? { ...m, content: streaming.text, reasoning: streaming.reasoning || m.reasoning, tools: streaming.tools && streaming.tools.length ? streaming.tools : m.tools, plan: streaming.plan && streaming.plan.length ? streaming.plan : m.plan } : m;
+            const liveMsg = isStreamingThis ? { ...m, content: streaming.text, reasoning: streaming.reasoning || m.reasoning, tools: streaming.tools && streaming.tools.length ? streaming.tools : m.tools, plan: streaming.plan && streaming.plan.length ? streaming.plan : m.plan, usage: streaming.usage || m.usage } : m;
             return <AssistantTurn key={i} msg={liveMsg} streaming={isStreamingThis} isLast={isLast}
               onFollowup={onFollowup} onToast={onToast} showTimestamps={settings.timestamps}
               showThinking={settings.showThinking} showTools={settings.showTools} onRegen={onRegen}
@@ -1541,7 +1553,36 @@ That's a lot of water for a moon smaller than ours.`;
         })}
         {log && <pre style={{ marginTop: 12, maxHeight: 200, overflow: "auto", background: "#0c0c10", color: "#cfe", padding: 12, borderRadius: 10, fontSize: 12, whiteSpace: "pre-wrap" }}>{log}</pre>}
         <AgentProfilesCard onToast={onToast} />
+        <ReasoningEffortCard onToast={onToast} />
         <BrowserUseCard onToast={onToast} />
+      </div>
+    );
+  }
+
+  // ---- Reasoning effort: how hard the local Hermes agent thinks (global agent default) ----
+  function ReasoningEffortCard({ onToast }) {
+    const [state, setState] = React.useState(null);   // {effort, options, available}
+    const [busy, setBusy] = React.useState(false);
+    React.useEffect(() => { fetch("/api/agent/reasoning-effort").then((r) => r.json()).then(setState).catch(() => {}); }, []);
+    if (!state || !state.available) return null;   // only when the local Hermes agent (ACP) backs chat
+    const choose = (effort) => {
+      setBusy(true);
+      fetch("/api/agent/reasoning-effort", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ effort }) })
+        .then((r) => r.json()).then((j) => {
+          setState((s) => ({ ...s, effort: j.effort }));
+          onToast && onToast({ type: j.ok ? "success" : "error", title: j.ok ? "Reasoning effort: " + (j.effort || "default") : "Couldn't set effort" });
+        }).catch(() => {}).then(() => setBusy(false));
+    };
+    const opts = [""].concat(state.options);   // "" = model default
+    return (
+      <div style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 14, marginTop: 12 }}>
+        <div className="sec-title">Reasoning effort</div>
+        <p style={{ fontSize: 12.5, color: "var(--text-3)", margin: "4px 0 10px" }}>How hard the agent thinks before answering. Sets your Hermes agent's global default — applies everywhere Hermes runs, not just AgentBay.</p>
+        <div className="effort-seg">
+          {opts.map((o) => (
+            <button key={o || "default"} className={"effort-opt" + ((state.effort || "") === o ? " on" : "")} disabled={busy} onClick={() => choose(o)}>{o || "Default"}</button>
+          ))}
+        </div>
       </div>
     );
   }
@@ -2001,6 +2042,14 @@ That's a lot of water for a moon smaller than ours.`;
                     <div className="rl"><div className="t">{(D.MODELS.find((m) => m.id === defaultModel) || {}).name || "No model selected"}</div>
                       <div className="d">New chats start with this model.</div></div>
                     <select className="mini-select" value={defaultModel} onChange={(e) => onDefaultModel(e.target.value)}>
+                      {D.MODELS.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="set-row">
+                    <div className="rl"><div className="t">Fallback model</div>
+                      <div className="d">If a reply errors, automatically retry it once with this model.</div></div>
+                    <select className="mini-select" value={s.fallbackModel || ""} onChange={(e) => set("fallbackModel", e.target.value)}>
+                      <option value="">None</option>
                       {D.MODELS.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
                     </select>
                   </div>
@@ -3508,7 +3557,7 @@ Object.assign(window, {
     reduceMotion: false, lang: "en", fontSize: "md", avatars: true, latex: true, codeBlocks: true,
     collapseDefault: false, bubbles: true, timestamps: false, autoScroll: true, followups: false,
     agentsEnabled: false, accent: "#d9a36b", systemPrompt: "", stt: "Whisper (local)", tts: "Browser (system)",
-    showThinking: true, showTools: true,
+    showThinking: true, showTools: true, fallbackModel: "",
   };
   function buildUser(name) {
     const nm = (name || "").trim();
@@ -3806,8 +3855,23 @@ Object.assign(window, {
       step();
     };
 
-    const startStream = (sessionId, prompt, model, images) => {
+    const startStream = (sessionId, prompt, model, images, isRetry) => {
       const followups = [];   // real, relevant follow-ups are fetched after the reply (if enabled)
+      // Fallback model: if this attempt errors and a (different) fallback is configured,
+      // retry the same prompt once with it. Returns true when a retry was kicked off.
+      const tryFallback = () => {
+        const fb = settings.fallbackModel;
+        if (isRetry || !fb || fb === model) return false;
+        try { toast({ type: "info", title: "Primary failed — retrying with fallback model" }); } catch (e) {}
+        setSessions((ss) => ss.map((s) => {   // swap the errored assistant turn's model label
+          if (s.id !== sessionId) return s;
+          const msgs = s.messages.slice(); const last = msgs[msgs.length - 1];
+          if (last && last.role === "assistant") msgs[msgs.length - 1] = { ...last, model: fb };
+          return { ...s, messages: msgs };
+        }));
+        startStream(sessionId, prompt, fb, images, true);
+        return true;
+      };
       // push empty assistant msg
       setSessions((ss) => ss.map((s) => s.id === sessionId ? {
         ...s, messages: [...s.messages, { role: "assistant", content: "", model, ts: new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }), followups, thought: 0 }],
@@ -3857,8 +3921,10 @@ Object.assign(window, {
       const fallback = () => fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: reqBody, signal })
         .then((r) => r.json()).then((d) => {
           if (streamRef.current === "cancel") { finalize(sessionId, "", followups, t0); return; }
-          metaRef.current[sessionId] = { reasoning: d.reasoning || "", tools: d.tools || [], plan: d.plan || [] };
-          runTypewriter(sessionId, d.reply || ("⚠ " + (d.error || "no response from model")), followups, t0);
+          const reply = d.reply || ("⚠ " + (d.error || "no response from model"));
+          if (reply.startsWith("⚠") && tryFallback()) return;   // primary errored → fallback model
+          metaRef.current[sessionId] = { reasoning: d.reasoning || "", tools: d.tools || [], plan: d.plan || [], usage: d.usage || null };
+          runTypewriter(sessionId, reply, followups, t0);
         }).catch((e) => { if (e && e.name === "AbortError") return; runTypewriter(sessionId, "⚠ " + e, followups, t0); });
 
       (async () => {
@@ -3869,8 +3935,8 @@ Object.assign(window, {
         } catch (e) { if (e && e.name === "AbortError") return; return fallback(); }
         const reader = resp.body.getReader();
         const dec = new TextDecoder();
-        let buf = "", content = "", reasoning = "", tools = [], plan = [], gotAny = false;
-        const pump = (extra) => setStreaming({ sessionId, text: content, reasoning, tools: tools.slice(), plan: plan.slice(), phase: content ? "stream" : "think", ...extra });
+        let buf = "", content = "", reasoning = "", tools = [], plan = [], usage = null, gotAny = false;
+        const pump = (extra) => setStreaming({ sessionId, text: content, reasoning, tools: tools.slice(), plan: plan.slice(), usage, phase: content ? "stream" : "think", ...extra });
         try {
           while (true) {
             const { done, value } = await reader.read();
@@ -3888,13 +3954,16 @@ Object.assign(window, {
               else if (ev.type === "reasoning") { reasoning += ev.data; pump(); }
               else if (ev.type === "tool") { const i = ev.data.index || 0; tools[i] = Object.assign({}, tools[i], ev.data); pump(); }
               else if (ev.type === "plan") { plan = Array.isArray(ev.data) ? ev.data : []; pump(); }
+              else if (ev.type === "usage") { usage = ev.data; pump(); }
               else if (ev.type === "error") { content = content || ("⚠ " + ev.data); pump(); }
             }
           }
         } catch (e) { if (e && e.name === "AbortError") return; if (streamRef.current === "cancel") return; if (!gotAny) return fallback(); }
         if (!gotAny) return fallback();
-        metaRef.current[sessionId] = { reasoning, tools: tools.filter(Boolean), plan };
-        finalize(sessionId, content || "⚠ no response from model", followups, t0);
+        const finalContent = content || "⚠ no response from model";
+        if (finalContent.startsWith("⚠") && tryFallback()) return;   // primary errored → fallback model
+        metaRef.current[sessionId] = { reasoning, tools: tools.filter(Boolean), plan, usage };
+        finalize(sessionId, finalContent, followups, t0);
       })();
     };
 
@@ -3905,7 +3974,7 @@ Object.assign(window, {
         if (s.id !== sessionId) return s;
         const msgs = s.messages.slice();
         const last = msgs[msgs.length - 1];
-        if (last && last.role === "assistant") msgs[msgs.length - 1] = { ...last, content: full, thought: Math.min(secs, 9), followups, reasoning: meta.reasoning || "", tools: meta.tools || [], plan: meta.plan || [] };
+        if (last && last.role === "assistant") msgs[msgs.length - 1] = { ...last, content: full, thought: Math.min(secs, 9), followups, reasoning: meta.reasoning || "", tools: meta.tools || [], plan: meta.plan || [], usage: meta.usage || null };
         return { ...s, messages: msgs, updated: Date.now() };
       }));
       setStreaming(null);

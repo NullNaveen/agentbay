@@ -400,6 +400,22 @@ body.no-anim *::after {
 .tool-out { color: var(--text-3); max-height: 160px; overflow: auto; }
 .tool-spin { width: 11px; height: 11px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--accent) 28%, transparent); border-top-color: var(--accent); animation: spin .7s linear infinite; display: inline-block; }
 .tool-spin-sm { width: 9px; height: 9px; margin-left: 6px; }
+
+/* context-usage meter (ACP usage_update: used / context-window size) */
+.usage-meter { display: inline-flex; align-items: center; gap: 6px; margin-top: 7px; padding: 3px 9px; border-radius: 8px; background: color-mix(in srgb, var(--text-3) 8%, transparent); color: var(--text-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+.usage-meter svg { opacity: .8; }
+.usage-txt { font-weight: 600; }
+.usage-bar { width: 54px; height: 4px; border-radius: 3px; background: color-mix(in srgb, var(--text-3) 22%, transparent); overflow: hidden; }
+.usage-fill { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width .4s ease; }
+.usage-meter.usage-high .usage-fill { background: #d9534f; }
+.usage-meter.usage-high { color: #d9534f; }
+
+/* reasoning-effort segmented control */
+.effort-seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.effort-opt { padding: 6px 13px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text-2); font-size: 12.5px; font-weight: 550; cursor: pointer; text-transform: capitalize; transition: all .12s ease; }
+.effort-opt:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+.effort-opt.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.effort-opt:disabled { opacity: .55; cursor: default; }
 .md-img { max-width: 100%; height: auto; border-radius: 9px; border: 1px solid var(--border); margin: 6px 0; display: block; }
 .md-mermaid { margin: 10px 0; padding: 12px; background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; overflow-x: auto; text-align: center; }
 .md-mermaid svg { max-width: 100%; height: auto; }
