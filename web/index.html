@@ -41,8 +41,12 @@
 
   <!-- QR generator: pure client-side encoder (the share link is never sent anywhere) -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
-  <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin="anonymous"></script>
-  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+  <!-- React is VENDORED locally so the app renders with no internet (it's a local
+       desktop agent). Falls back to the CDN only if the local copy is somehow missing. -->
+  <script src="/static/vendor/react.production.min.js"></script>
+  <script>window.React||document.write('<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"><\/script>')</script>
+  <script src="/static/vendor/react-dom.production.min.js"></script>
+  <script>window.ReactDOM||document.write('<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"><\/script>')</script>
 
   <!-- Precompiled bundle (built from js/bundle.jsx by tools/build.js). No in-browser
        Babel transpile — the UI loads instantly. Edit the .jsx, then `npm run build`. -->
