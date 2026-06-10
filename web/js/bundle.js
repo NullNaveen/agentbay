@@ -1657,7 +1657,33 @@ That's a lot of water for a moon smaller than ours.`;
       className: "ts"
     }, msg.ts)), msg.thought ? /*#__PURE__*/React.createElement(Activity, {
       seconds: msg.thought
-    }) : null, showThinking && msg.reasoning ? /*#__PURE__*/React.createElement("details", {
+    }) : null, msg.plan && msg.plan.length ? (() => {
+      const done = msg.plan.filter(p => p.status === "completed").length;
+      return /*#__PURE__*/React.createElement("div", {
+        className: "agent-plan" + (done === msg.plan.length ? " agent-plan-done" : "")
+      }, /*#__PURE__*/React.createElement("div", {
+        className: "agent-plan-h"
+      }, /*#__PURE__*/React.createElement(I.CheckCircle, {
+        size: 13
+      }), " Task plan", /*#__PURE__*/React.createElement("span", {
+        className: "agent-plan-count"
+      }, done, "/", msg.plan.length)), /*#__PURE__*/React.createElement("div", {
+        className: "agent-plan-body"
+      }, msg.plan.map((p, i) => /*#__PURE__*/React.createElement("div", {
+        key: i,
+        className: "plan-item plan-" + (p.status || "pending")
+      }, /*#__PURE__*/React.createElement("span", {
+        className: "plan-tick"
+      }, p.status === "completed" ? /*#__PURE__*/React.createElement(I.Check, {
+        size: 12
+      }) : p.status === "in_progress" ? /*#__PURE__*/React.createElement("span", {
+        className: "plan-spin"
+      }) : /*#__PURE__*/React.createElement("span", {
+        className: "plan-dot"
+      })), /*#__PURE__*/React.createElement("span", {
+        className: "plan-text"
+      }, p.content)))));
+    })() : null, showThinking && msg.reasoning ? /*#__PURE__*/React.createElement("details", {
       className: "agent-trace",
       open: streaming
     }, /*#__PURE__*/React.createElement("summary", null, /*#__PURE__*/React.createElement(I.Sparkle, {
@@ -1863,7 +1889,8 @@ That's a lot of water for a moon smaller than ours.`;
         ...m,
         content: streaming.text,
         reasoning: streaming.reasoning || m.reasoning,
-        tools: streaming.tools && streaming.tools.length ? streaming.tools : m.tools
+        tools: streaming.tools && streaming.tools.length ? streaming.tools : m.tools,
+        plan: streaming.plan && streaming.plan.length ? streaming.plan : m.plan
       } : m;
       return /*#__PURE__*/React.createElement(AssistantTurn, {
         key: i,
@@ -8092,7 +8119,8 @@ Object.assign(window, {
         }
         metaRef.current[sessionId] = {
           reasoning: d.reasoning || "",
-          tools: d.tools || []
+          tools: d.tools || [],
+          plan: d.plan || []
         };
         runTypewriter(sessionId, d.reply || "⚠ " + (d.error || "no response from model"), followups, t0);
       }).catch(e => runTypewriter(sessionId, "⚠ " + e, followups, t0));
@@ -8116,12 +8144,14 @@ Object.assign(window, {
           content = "",
           reasoning = "",
           tools = [],
+          plan = [],
           gotAny = false;
         const pump = extra => setStreaming({
           sessionId,
           text: content,
           reasoning,
           tools: tools.slice(),
+          plan: plan.slice(),
           phase: content ? "stream" : "think",
           ...extra
         });
@@ -8167,6 +8197,9 @@ Object.assign(window, {
                   args: ev.data.args
                 };
                 pump();
+              } else if (ev.type === "plan") {
+                plan = Array.isArray(ev.data) ? ev.data : [];
+                pump();
               } else if (ev.type === "error") {
                 content = content || "⚠ " + ev.data;
                 pump();
@@ -8179,7 +8212,8 @@ Object.assign(window, {
         if (!gotAny) return fallback();
         metaRef.current[sessionId] = {
           reasoning,
-          tools: tools.filter(Boolean)
+          tools: tools.filter(Boolean),
+          plan
         };
         finalize(sessionId, content || "⚠ no response from model", followups, t0);
       })();
@@ -8198,7 +8232,8 @@ Object.assign(window, {
           thought: Math.min(secs, 9),
           followups,
           reasoning: meta.reasoning || "",
-          tools: meta.tools || []
+          tools: meta.tools || [],
+          plan: meta.plan || []
         };
         return {
           ...s,

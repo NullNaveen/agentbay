@@ -2475,6 +2475,10 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=N
                         tool_idx[tid] = tool_n[0]; tool_n[0] += 1
                     yield ("tool", {"name": u.get("title") or u.get("kind") or "tool",
                                     "args": _acp_tool_text(u), "index": tool_idx[tid]})
+                elif t == "plan":
+                    # the agent's live task plan (todo list) — full state each time
+                    yield ("plan", [{"content": _ANSI_RE.sub("", str(e.get("content") or "")), "status": e.get("status") or "pending"}
+                                    for e in (u.get("entries") or []) if isinstance(e, dict)])
                 continue
             if "result" in m or "error" in m:
                 if mid == st.get("init"):
@@ -3417,7 +3421,7 @@ class Handler(BaseHTTPRequestHandler):
             msgs = data.get("messages") or []
             is_agent, model_id, images, env, kind = _agent_route(cfg, data)
             if is_agent:
-                reply, reasoning, tools = "", "", []
+                reply, reasoning, tools, plan = "", "", [], []
                 t0 = time.time()
                 for ev, payload in local_agent_stream(msgs, data.get("session_id"), model_id, images, env, kind):
                     if ev == "token":
@@ -3426,10 +3430,12 @@ class Handler(BaseHTTPRequestHandler):
                         reasoning += payload
                     elif ev == "tool":
                         tools.append(payload)
+                    elif ev == "plan":
+                        plan = payload  # full state each emission — keep the latest
                     elif ev == "error":
                         reply = reply or ("⚠ " + str(payload))
                 return self._send(200, {"reply": reply, "agent": True, "model": data.get("model") or "hermes-agent",
-                                        "reasoning": reasoning, "tools": tools,
+                                        "reasoning": reasoning, "tools": tools, "plan": plan,
                                         "latency_ms": int((time.time() - t0) * 1000)})
             res = chat_complete(cfg, msgs, provider=data.get("provider"), model=data.get("model"), session_id=data.get("session_id"))
             threading.Thread(target=langfuse_log,

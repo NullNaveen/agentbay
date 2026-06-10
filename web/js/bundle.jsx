@@ -839,6 +839,30 @@ That's a lot of water for a moon smaller than ours.`;
 
         {msg.thought ? <Activity seconds={msg.thought} /> : null}
 
+        {msg.plan && msg.plan.length ? (() => {
+          const done = msg.plan.filter((p) => p.status === "completed").length;
+          return (
+            <div className={"agent-plan" + (done === msg.plan.length ? " agent-plan-done" : "")}>
+              <div className="agent-plan-h">
+                <I.CheckCircle size={13} /> Task plan
+                <span className="agent-plan-count">{done}/{msg.plan.length}</span>
+              </div>
+              <div className="agent-plan-body">
+                {msg.plan.map((p, i) => (
+                  <div key={i} className={"plan-item plan-" + (p.status || "pending")}>
+                    <span className="plan-tick">
+                      {p.status === "completed" ? <I.Check size={12} />
+                        : p.status === "in_progress" ? <span className="plan-spin" />
+                        : <span className="plan-dot" />}
+                    </span>
+                    <span className="plan-text">{p.content}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })() : null}
+
         {showThinking && msg.reasoning ? (
           <details className="agent-trace" open={streaming}>
             <summary><I.Sparkle size={13} /> Thinking{streaming ? "…" : ""}</summary>
@@ -959,7 +983,7 @@ That's a lot of water for a moon smaller than ours.`;
               </div>;
             }
             const isStreamingThis = streaming && isLast;
-            const liveMsg = isStreamingThis ? { ...m, content: streaming.text, reasoning: streaming.reasoning || m.reasoning, tools: streaming.tools && streaming.tools.length ? streaming.tools : m.tools } : m;
+            const liveMsg = isStreamingThis ? { ...m, content: streaming.text, reasoning: streaming.reasoning || m.reasoning, tools: streaming.tools && streaming.tools.length ? streaming.tools : m.tools, plan: streaming.plan && streaming.plan.length ? streaming.plan : m.plan } : m;
             return <AssistantTurn key={i} msg={liveMsg} streaming={isStreamingThis} isLast={isLast}
               onFollowup={onFollowup} onToast={onToast} showTimestamps={settings.timestamps}
               showThinking={settings.showThinking} showTools={settings.showTools} onRegen={onRegen}
@@ -3802,7 +3826,7 @@ Object.assign(window, {
       const fallback = () => fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: reqBody })
         .then((r) => r.json()).then((d) => {
           if (streamRef.current === "cancel") { finalize(sessionId, "", followups, t0); return; }
-          metaRef.current[sessionId] = { reasoning: d.reasoning || "", tools: d.tools || [] };
+          metaRef.current[sessionId] = { reasoning: d.reasoning || "", tools: d.tools || [], plan: d.plan || [] };
           runTypewriter(sessionId, d.reply || ("⚠ " + (d.error || "no response from model")), followups, t0);
         }).catch((e) => runTypewriter(sessionId, "⚠ " + e, followups, t0));
 
@@ -3814,8 +3838,8 @@ Object.assign(window, {
         } catch (e) { return fallback(); }
         const reader = resp.body.getReader();
         const dec = new TextDecoder();
-        let buf = "", content = "", reasoning = "", tools = [], gotAny = false;
-        const pump = (extra) => setStreaming({ sessionId, text: content, reasoning, tools: tools.slice(), phase: content ? "stream" : "think", ...extra });
+        let buf = "", content = "", reasoning = "", tools = [], plan = [], gotAny = false;
+        const pump = (extra) => setStreaming({ sessionId, text: content, reasoning, tools: tools.slice(), plan: plan.slice(), phase: content ? "stream" : "think", ...extra });
         try {
           while (true) {
             const { done, value } = await reader.read();
@@ -3832,12 +3856,13 @@ Object.assign(window, {
               if (ev.type === "token") { content += ev.data; pump(); }
               else if (ev.type === "reasoning") { reasoning += ev.data; pump(); }
               else if (ev.type === "tool") { const i = ev.data.index || 0; tools[i] = { name: ev.data.name, args: ev.data.args }; pump(); }
+              else if (ev.type === "plan") { plan = Array.isArray(ev.data) ? ev.data : []; pump(); }
               else if (ev.type === "error") { content = content || ("⚠ " + ev.data); pump(); }
             }
           }
         } catch (e) { if (!gotAny) return fallback(); }
         if (!gotAny) return fallback();
-        metaRef.current[sessionId] = { reasoning, tools: tools.filter(Boolean) };
+        metaRef.current[sessionId] = { reasoning, tools: tools.filter(Boolean), plan };
         finalize(sessionId, content || "⚠ no response from model", followups, t0);
       })();
     };
@@ -3849,7 +3874,7 @@ Object.assign(window, {
         if (s.id !== sessionId) return s;
         const msgs = s.messages.slice();
         const last = msgs[msgs.length - 1];
-        if (last && last.role === "assistant") msgs[msgs.length - 1] = { ...last, content: full, thought: Math.min(secs, 9), followups, reasoning: meta.reasoning || "", tools: meta.tools || [] };
+        if (last && last.role === "assistant") msgs[msgs.length - 1] = { ...last, content: full, thought: Math.min(secs, 9), followups, reasoning: meta.reasoning || "", tools: meta.tools || [], plan: meta.plan || [] };
         return { ...s, messages: msgs, updated: Date.now() };
       }));
       setStreaming(null);
