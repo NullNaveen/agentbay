@@ -2367,6 +2367,42 @@ def _acp_tool_input(u):
         return str(ri)[:300]
 
 
+# Real Stop: a turn registers itself here so a separate /api/chat/cancel request can
+# reach the running `hermes acp` process and cancel it (ACP session/cancel + kill).
+_active_turns = {}            # session_id -> {proc, stdin_lock, acp_sid:[..], cancel:[bool]}
+_active_lock = threading.Lock()
+
+
+def _cancel_turn(session_id):
+    """Stop an in-flight agent turn for this session. Sends the ACP session/cancel
+    notification (graceful — the agent flushes + saves), then terminates the process
+    as a fallback. Returns True if a live turn was found."""
+    with _active_lock:
+        rec = _active_turns.get(session_id)
+    if not rec:
+        return False
+    rec["cancel"][0] = True
+    proc = rec.get("proc"); sid = rec["acp_sid"][0]
+    try:
+        if sid and proc and proc.poll() is None:
+            with rec["stdin_lock"]:
+                proc.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "session/cancel",
+                                             "params": {"sessionId": sid}}) + "\n")
+                proc.stdin.flush()
+    except Exception:
+        pass
+
+    def _kill():
+        time.sleep(1.5)            # give the agent a moment to cancel gracefully
+        try:
+            if proc and proc.poll() is None:
+                proc.terminate()
+        except Exception:
+            pass
+    threading.Thread(target=_kill, daemon=True).start()
+    return True
+
+
 def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=None, images=None, env=None):
     """Run ONE agent turn via `hermes acp` over stdio. Yields (type, data):
     token / reasoning / tool / error / done. Sessions persist (agentbay id ↔ ACP id).
@@ -2405,16 +2441,25 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=N
     threading.Thread(target=_reader, daemon=True).start()
 
     nid = [0]
+    stdin_lock = threading.Lock()   # /api/chat/cancel may write session/cancel concurrently
+    acp_holder = [None]             # current ACP sessionId (for cancel), filled when known
+    cancel_flag = [False]
+    if session_id:
+        with _active_lock:
+            _active_turns[session_id] = {"proc": proc, "stdin_lock": stdin_lock,
+                                         "acp_sid": acp_holder, "cancel": cancel_flag}
 
     def send(method, params):
         nid[0] += 1
-        proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": nid[0], "method": method, "params": params}) + "\n")
-        proc.stdin.flush()
+        with stdin_lock:
+            proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": nid[0], "method": method, "params": params}) + "\n")
+            proc.stdin.flush()
         return nid[0]
 
     def reply(i, res):
-        proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": i, "result": res}) + "\n")
-        proc.stdin.flush()
+        with stdin_lock:
+            proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": i, "result": res}) + "\n")
+            proc.stdin.flush()
 
     prompt_blocks = [{"type": "text", "text": user_text}]
     for im in (images or []):
@@ -2449,12 +2494,15 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=N
 
     amap = _acp_load_map()
     acp_sid = amap.get(session_id) if session_id else None
+    acp_holder[0] = acp_sid
     st = {}
     st["init"] = send("initialize", {"protocolVersion": 1, "clientCapabilities": {},
                                       "clientInfo": {"name": "agentbay", "version": "1"}})
     deadline = time.time() + timeout
     try:
         while time.time() < deadline:
+            if cancel_flag[0]:
+                yield ("error", "⏹ stopped"); break
             try:
                 line = q.get(timeout=1)
             except Exception:
@@ -2538,6 +2586,7 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=N
                     if "error" in m:
                         yield ("__fail__", "session/new error: " + str(m.get("error"))[:200]); return
                     acp_sid = (m.get("result") or {}).get("sessionId")
+                    acp_holder[0] = acp_sid
                     if acp_sid:
                         if session_id:
                             with _acp_lock:
@@ -2554,6 +2603,10 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=N
                     break
         yield ("done", {})
     finally:
+        if session_id:
+            with _active_lock:
+                if _active_turns.get(session_id, {}).get("proc") is proc:
+                    _active_turns.pop(session_id, None)
         try:
             proc.stdin.close()
         except Exception:
@@ -3528,6 +3581,10 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
             return
+        if path == "/api/chat/cancel":
+            # Real Stop — cancel the in-flight agent turn for this session.
+            stopped = _cancel_turn(data.get("session_id"))
+            return self._send(200, {"stopped": bool(stopped)})
         if path == "/api/followups":
             cfg = load_config()
             res = gen_followups(cfg, data.get("messages") or [], provider=data.get("provider"), model=data.get("model"))

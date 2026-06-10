@@ -7950,6 +7950,7 @@ Object.assign(window, {
     // streaming
     const [streaming, setStreaming] = useState(null); // { sessionId, text, full, timer }
     const streamRef = useRef(null);
+    const abortRef = useRef(null); // AbortController for the in-flight stream (real Stop)
     const metaRef = useRef({}); // {sessionId: {reasoning, tools}} captured from the reply
     const sessionsRef = useRef(sessions);
     useEffect(() => {
@@ -8145,6 +8146,12 @@ Object.assign(window, {
         images: images && images.length ? images : undefined
       });
 
+      // AbortController so Stop can close the connection immediately (real Stop also
+      // POSTs /api/chat/cancel to halt the agent server-side).
+      const ac = typeof AbortController !== "undefined" ? new AbortController() : null;
+      abortRef.current = ac;
+      const signal = ac ? ac.signal : undefined;
+
       // Live streaming: render tokens + the agent's thinking + tool calls as they
       // arrive. Falls back to the plain /api/chat + typewriter on any error.
       const fallback = () => fetch("/api/chat", {
@@ -8152,7 +8159,8 @@ Object.assign(window, {
         headers: {
           "Content-Type": "application/json"
         },
-        body: reqBody
+        body: reqBody,
+        signal
       }).then(r => r.json()).then(d => {
         if (streamRef.current === "cancel") {
           finalize(sessionId, "", followups, t0);
@@ -8164,7 +8172,10 @@ Object.assign(window, {
           plan: d.plan || []
         };
         runTypewriter(sessionId, d.reply || "⚠ " + (d.error || "no response from model"), followups, t0);
-      }).catch(e => runTypewriter(sessionId, "⚠ " + e, followups, t0));
+      }).catch(e => {
+        if (e && e.name === "AbortError") return;
+        runTypewriter(sessionId, "⚠ " + e, followups, t0);
+      });
       (async () => {
         let resp;
         try {
@@ -8173,10 +8184,12 @@ Object.assign(window, {
             headers: {
               "Content-Type": "application/json"
             },
-            body: reqBody
+            body: reqBody,
+            signal
           });
           if (!resp.ok || !resp.body) throw new Error("no stream");
         } catch (e) {
+          if (e && e.name === "AbortError") return;
           return fallback();
         }
         const reader = resp.body.getReader();
@@ -8245,6 +8258,8 @@ Object.assign(window, {
             }
           }
         } catch (e) {
+          if (e && e.name === "AbortError") return;
+          if (streamRef.current === "cancel") return;
           if (!gotAny) return fallback();
         }
         if (!gotAny) return fallback();
@@ -8327,7 +8342,23 @@ Object.assign(window, {
       if (streamRef.current && typeof streamRef.current !== "string") clearTimeout(streamRef.current);
       const sid = streaming && streaming.sessionId;
       const partial = streaming ? streaming.text : "";
+      streamRef.current = "cancel"; // reader loop bails on its next tick
+      try {
+        abortRef.current && abortRef.current.abort();
+      } catch (e) {} // close the connection now
       if (sid) {
+        // REAL stop — tell the server to cancel the agent turn (ACP session/cancel + kill)
+        try {
+          fetch("/api/chat/cancel", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              session_id: sid
+            })
+          }).catch(() => {});
+        } catch (e) {}
         setSessions(ss => ss.map(s => {
           if (s.id !== sid) return s;
           const msgs = s.messages.slice();
@@ -8344,6 +8375,7 @@ Object.assign(window, {
         }));
       }
       setStreaming(null);
+      abortRef.current = null;
       streamRef.current = null;
     };
 

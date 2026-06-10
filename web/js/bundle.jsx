@@ -3705,6 +3705,7 @@ Object.assign(window, {
     // streaming
     const [streaming, setStreaming] = useState(null); // { sessionId, text, full, timer }
     const streamRef = useRef(null);
+    const abortRef = useRef(null);   // AbortController for the in-flight stream (real Stop)
     const metaRef = useRef({});   // {sessionId: {reasoning, tools}} captured from the reply
     const sessionsRef = useRef(sessions);
     useEffect(() => { sessionsRef.current = sessions; }, [sessions]);
@@ -3845,21 +3846,27 @@ Object.assign(window, {
       const modelName = rest.join("::");
       const reqBody = JSON.stringify({ messages: history, provider: provId || undefined, model: modelName || undefined, session_id: sessionId, images: (images && images.length ? images : undefined) });
 
+      // AbortController so Stop can close the connection immediately (real Stop also
+      // POSTs /api/chat/cancel to halt the agent server-side).
+      const ac = (typeof AbortController !== "undefined") ? new AbortController() : null;
+      abortRef.current = ac;
+      const signal = ac ? ac.signal : undefined;
+
       // Live streaming: render tokens + the agent's thinking + tool calls as they
       // arrive. Falls back to the plain /api/chat + typewriter on any error.
-      const fallback = () => fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: reqBody })
+      const fallback = () => fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: reqBody, signal })
         .then((r) => r.json()).then((d) => {
           if (streamRef.current === "cancel") { finalize(sessionId, "", followups, t0); return; }
           metaRef.current[sessionId] = { reasoning: d.reasoning || "", tools: d.tools || [], plan: d.plan || [] };
           runTypewriter(sessionId, d.reply || ("⚠ " + (d.error || "no response from model")), followups, t0);
-        }).catch((e) => runTypewriter(sessionId, "⚠ " + e, followups, t0));
+        }).catch((e) => { if (e && e.name === "AbortError") return; runTypewriter(sessionId, "⚠ " + e, followups, t0); });
 
       (async () => {
         let resp;
         try {
-          resp = await fetch("/api/chat/stream", { method: "POST", headers: { "Content-Type": "application/json" }, body: reqBody });
+          resp = await fetch("/api/chat/stream", { method: "POST", headers: { "Content-Type": "application/json" }, body: reqBody, signal });
           if (!resp.ok || !resp.body) throw new Error("no stream");
-        } catch (e) { return fallback(); }
+        } catch (e) { if (e && e.name === "AbortError") return; return fallback(); }
         const reader = resp.body.getReader();
         const dec = new TextDecoder();
         let buf = "", content = "", reasoning = "", tools = [], plan = [], gotAny = false;
@@ -3884,7 +3891,7 @@ Object.assign(window, {
               else if (ev.type === "error") { content = content || ("⚠ " + ev.data); pump(); }
             }
           }
-        } catch (e) { if (!gotAny) return fallback(); }
+        } catch (e) { if (e && e.name === "AbortError") return; if (streamRef.current === "cancel") return; if (!gotAny) return fallback(); }
         if (!gotAny) return fallback();
         metaRef.current[sessionId] = { reasoning, tools: tools.filter(Boolean), plan };
         finalize(sessionId, content || "⚠ no response from model", followups, t0);
@@ -3930,7 +3937,11 @@ Object.assign(window, {
       if (streamRef.current && typeof streamRef.current !== "string") clearTimeout(streamRef.current);
       const sid = streaming && streaming.sessionId;
       const partial = streaming ? streaming.text : "";
+      streamRef.current = "cancel";                          // reader loop bails on its next tick
+      try { abortRef.current && abortRef.current.abort(); } catch (e) {}   // close the connection now
       if (sid) {
+        // REAL stop — tell the server to cancel the agent turn (ACP session/cancel + kill)
+        try { fetch("/api/chat/cancel", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: sid }) }).catch(() => {}); } catch (e) {}
         setSessions((ss) => ss.map((s) => {
           if (s.id !== sid) return s;
           const msgs = s.messages.slice();
@@ -3939,7 +3950,7 @@ Object.assign(window, {
           return { ...s, messages: msgs };
         }));
       }
-      setStreaming(null); streamRef.current = null;
+      setStreaming(null); abortRef.current = null; streamRef.current = null;
     };
 
     /* ---- send ---- */
