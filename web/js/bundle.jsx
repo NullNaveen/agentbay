@@ -869,16 +869,40 @@ That's a lot of water for a moon smaller than ours.`;
             <div className="agent-trace-body">{msg.reasoning}</div>
           </details>
         ) : null}
-        {showTools && msg.tools && msg.tools.length ? (
-          <details className="agent-trace" open={streaming}>
-            <summary><I.Wand size={13} /> Tools used ({msg.tools.length})</summary>
-            <div className="agent-trace-body">
-              {msg.tools.map((t, i) => (
-                <div key={i} className="tool-call"><code>{t.name}</code>{t.args ? <span className="tool-args">{t.args}</span> : null}</div>
-              ))}
-            </div>
-          </details>
-        ) : null}
+        {showTools && msg.tools && msg.tools.length ? (() => {
+          const KIND_IC = { read: "FileText", edit: "Pencil", delete: "Trash", move: "File", search: "Filter", execute: "Command", fetch: "Globe", think: "Brain", other: "Wand" };
+          const running = msg.tools.filter((t) => t.status === "in_progress" || t.status === "pending").length;
+          return (
+            <details className="agent-trace tool-trace" open={streaming}>
+              <summary>
+                <I.Wand size={13} /> Tools <span className="trace-count">{msg.tools.length}</span>
+                {streaming && running ? <span className="tool-spin tool-spin-sm" /> : null}
+              </summary>
+              <div className="agent-trace-body tool-cards">
+                {msg.tools.map((t, i) => {
+                  const TIcon = I[KIND_IC[t.kind]] || I.Wand;
+                  const st = t.status || (streaming ? "in_progress" : "completed");
+                  const out = t.output || (t.args && t.args !== t.input ? t.args : "");
+                  return (
+                    <div key={i} className={"tool-card tool-" + st}>
+                      <div className="tool-card-head">
+                        <span className="tool-kind-ic"><TIcon size={13} /></span>
+                        <span className="tool-name">{t.name || "tool"}</span>
+                        <span className="tool-status-ic">
+                          {st === "in_progress" || st === "pending" ? <span className="tool-spin" />
+                            : st === "failed" ? <I.AlertTriangle size={12} />
+                            : <I.Check size={12} />}
+                        </span>
+                      </div>
+                      {t.input ? <div className="tool-io tool-in"><code>{t.input}</code></div> : null}
+                      {out ? <div className="tool-io tool-out">{out.length > 320 ? out.slice(0, 320) + "…" : out}</div> : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </details>
+          );
+        })() : null}
 
         {streaming && !msg.content ? null : (
           <div className="md" ref={mdRef} dangerouslySetInnerHTML={{ __html: D.renderMarkdown(msg.content) }} />
@@ -3484,7 +3508,7 @@ Object.assign(window, {
     reduceMotion: false, lang: "en", fontSize: "md", avatars: true, latex: true, codeBlocks: true,
     collapseDefault: false, bubbles: true, timestamps: false, autoScroll: true, followups: false,
     agentsEnabled: false, accent: "#d9a36b", systemPrompt: "", stt: "Whisper (local)", tts: "Browser (system)",
-    showThinking: false, showTools: false,
+    showThinking: true, showTools: true,
   };
   function buildUser(name) {
     const nm = (name || "").trim();
@@ -3855,7 +3879,7 @@ Object.assign(window, {
               gotAny = true;
               if (ev.type === "token") { content += ev.data; pump(); }
               else if (ev.type === "reasoning") { reasoning += ev.data; pump(); }
-              else if (ev.type === "tool") { const i = ev.data.index || 0; tools[i] = { name: ev.data.name, args: ev.data.args }; pump(); }
+              else if (ev.type === "tool") { const i = ev.data.index || 0; tools[i] = Object.assign({}, tools[i], ev.data); pump(); }
               else if (ev.type === "plan") { plan = Array.isArray(ev.data) ? ev.data : []; pump(); }
               else if (ev.type === "error") { content = content || ("⚠ " + ev.data); pump(); }
             }

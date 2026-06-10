@@ -2335,7 +2335,7 @@ def _latest_user(messages):
 
 
 def _acp_tool_text(u):
-    """Human-friendly tool summary from an ACP tool_call update."""
+    """The tool's OUTPUT (result content) from an ACP tool_call update."""
     parts = []
     for c in (u.get("content") or []):
         if isinstance(c, dict):
@@ -2343,9 +2343,28 @@ def _acp_tool_text(u):
                 t = c["content"].get("text")
                 if t:
                     parts.append(t)
+            elif c.get("type") == "diff" and isinstance(c.get("path"), str):
+                parts.append("± " + c["path"])   # an edit/diff — show the file
             elif c.get("text"):
                 parts.append(c["text"])
-    return (" ".join(parts))[:600]
+    return _ANSI_RE.sub("", " ".join(parts))[:1200]
+
+
+def _acp_tool_input(u):
+    """Compact one-line summary of a tool's INPUT (rawInput) — the command/path/query."""
+    ri = u.get("rawInput")
+    if not isinstance(ri, dict):
+        ri = u.get("input") if isinstance(u.get("input"), dict) else None
+    if not isinstance(ri, dict):
+        return ""
+    for k in ("command", "cmd", "path", "file_path", "filePath", "query", "url", "pattern", "prompt"):
+        v = ri.get(k)
+        if isinstance(v, str) and v.strip():
+            return _ANSI_RE.sub("", v.strip())[:300]
+    try:
+        return json.dumps(ri, ensure_ascii=False)[:300]
+    except Exception:
+        return str(ri)[:300]
 
 
 def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=None, images=None, env=None):
@@ -2414,6 +2433,7 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=N
     # prompt — otherwise every reply prepends all earlier replies.
     capturing = [False]
     tool_idx = {}; tool_n = [0]   # toolCallId -> slot, so multiple tools don't collapse into one
+    tool_state = {}               # toolCallId -> merged card state (updates carry only deltas)
 
     def _send_prompt(sid):
         capturing[0] = True
@@ -2470,11 +2490,32 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=N
                     if tx:
                         yield ("reasoning", tx)
                 elif t in ("tool_call", "tool_call_update"):
+                    # tool_call starts a card; tool_call_update sends deltas (status,
+                    # output) for the SAME toolCallId. Merge server-side and emit the
+                    # full current state each time so the UI shows one live card.
                     tid = u.get("toolCallId") or u.get("id") or ("t%d" % tool_n[0])
                     if tid not in tool_idx:
                         tool_idx[tid] = tool_n[0]; tool_n[0] += 1
-                    yield ("tool", {"name": u.get("title") or u.get("kind") or "tool",
-                                    "args": _acp_tool_text(u), "index": tool_idx[tid]})
+                        tool_state[tid] = {"name": "tool", "kind": "", "status": "pending",
+                                           "input": "", "output": "", "index": tool_idx[tid]}
+                    stt = tool_state[tid]
+                    if u.get("title"):
+                        stt["name"] = _ANSI_RE.sub("", str(u["title"]))[:160]
+                    if u.get("kind"):
+                        stt["kind"] = u["kind"]
+                        if stt["name"] == "tool":
+                            stt["name"] = u["kind"]
+                    if u.get("status"):
+                        stt["status"] = u["status"]
+                    inp = _acp_tool_input(u)
+                    if inp:
+                        stt["input"] = inp
+                    out = _acp_tool_text(u)
+                    if out:
+                        stt["output"] = out
+                    # keep "args" for back-compat with older clients (input ?: output)
+                    stt["args"] = stt["input"] or stt["output"]
+                    yield ("tool", dict(stt))
                 elif t == "plan":
                     # the agent's live task plan (todo list) — full state each time
                     yield ("plan", [{"content": _ANSI_RE.sub("", str(e.get("content") or "")), "status": e.get("status") or "pending"}
@@ -3429,7 +3470,11 @@ class Handler(BaseHTTPRequestHandler):
                     elif ev == "reasoning":
                         reasoning += payload
                     elif ev == "tool":
-                        tools.append(payload)
+                        # updates carry the same index (status/output deltas) — merge by slot
+                        idx = payload.get("index", len(tools))
+                        while len(tools) <= idx:
+                            tools.append({})
+                        tools[idx] = payload
                     elif ev == "plan":
                         plan = payload  # full state each emission — keep the latest
                     elif ev == "error":

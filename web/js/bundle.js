@@ -1690,19 +1690,60 @@ That's a lot of water for a moon smaller than ours.`;
       size: 13
     }), " Thinking", streaming ? "…" : ""), /*#__PURE__*/React.createElement("div", {
       className: "agent-trace-body"
-    }, msg.reasoning)) : null, showTools && msg.tools && msg.tools.length ? /*#__PURE__*/React.createElement("details", {
-      className: "agent-trace",
-      open: streaming
-    }, /*#__PURE__*/React.createElement("summary", null, /*#__PURE__*/React.createElement(I.Wand, {
-      size: 13
-    }), " Tools used (", msg.tools.length, ")"), /*#__PURE__*/React.createElement("div", {
-      className: "agent-trace-body"
-    }, msg.tools.map((t, i) => /*#__PURE__*/React.createElement("div", {
-      key: i,
-      className: "tool-call"
-    }, /*#__PURE__*/React.createElement("code", null, t.name), t.args ? /*#__PURE__*/React.createElement("span", {
-      className: "tool-args"
-    }, t.args) : null)))) : null, streaming && !msg.content ? null : /*#__PURE__*/React.createElement("div", {
+    }, msg.reasoning)) : null, showTools && msg.tools && msg.tools.length ? (() => {
+      const KIND_IC = {
+        read: "FileText",
+        edit: "Pencil",
+        delete: "Trash",
+        move: "File",
+        search: "Filter",
+        execute: "Command",
+        fetch: "Globe",
+        think: "Brain",
+        other: "Wand"
+      };
+      const running = msg.tools.filter(t => t.status === "in_progress" || t.status === "pending").length;
+      return /*#__PURE__*/React.createElement("details", {
+        className: "agent-trace tool-trace",
+        open: streaming
+      }, /*#__PURE__*/React.createElement("summary", null, /*#__PURE__*/React.createElement(I.Wand, {
+        size: 13
+      }), " Tools ", /*#__PURE__*/React.createElement("span", {
+        className: "trace-count"
+      }, msg.tools.length), streaming && running ? /*#__PURE__*/React.createElement("span", {
+        className: "tool-spin tool-spin-sm"
+      }) : null), /*#__PURE__*/React.createElement("div", {
+        className: "agent-trace-body tool-cards"
+      }, msg.tools.map((t, i) => {
+        const TIcon = I[KIND_IC[t.kind]] || I.Wand;
+        const st = t.status || (streaming ? "in_progress" : "completed");
+        const out = t.output || (t.args && t.args !== t.input ? t.args : "");
+        return /*#__PURE__*/React.createElement("div", {
+          key: i,
+          className: "tool-card tool-" + st
+        }, /*#__PURE__*/React.createElement("div", {
+          className: "tool-card-head"
+        }, /*#__PURE__*/React.createElement("span", {
+          className: "tool-kind-ic"
+        }, /*#__PURE__*/React.createElement(TIcon, {
+          size: 13
+        })), /*#__PURE__*/React.createElement("span", {
+          className: "tool-name"
+        }, t.name || "tool"), /*#__PURE__*/React.createElement("span", {
+          className: "tool-status-ic"
+        }, st === "in_progress" || st === "pending" ? /*#__PURE__*/React.createElement("span", {
+          className: "tool-spin"
+        }) : st === "failed" ? /*#__PURE__*/React.createElement(I.AlertTriangle, {
+          size: 12
+        }) : /*#__PURE__*/React.createElement(I.Check, {
+          size: 12
+        }))), t.input ? /*#__PURE__*/React.createElement("div", {
+          className: "tool-io tool-in"
+        }, /*#__PURE__*/React.createElement("code", null, t.input)) : null, out ? /*#__PURE__*/React.createElement("div", {
+          className: "tool-io tool-out"
+        }, out.length > 320 ? out.slice(0, 320) + "…" : out) : null);
+      })));
+    })() : null, streaming && !msg.content ? null : /*#__PURE__*/React.createElement("div", {
       className: "md",
       ref: mdRef,
       dangerouslySetInnerHTML: {
@@ -7578,8 +7619,8 @@ Object.assign(window, {
     systemPrompt: "",
     stt: "Whisper (local)",
     tts: "Browser (system)",
-    showThinking: false,
-    showTools: false
+    showThinking: true,
+    showTools: true
   };
   function buildUser(name) {
     const nm = (name || "").trim();
@@ -8192,10 +8233,7 @@ Object.assign(window, {
                 pump();
               } else if (ev.type === "tool") {
                 const i = ev.data.index || 0;
-                tools[i] = {
-                  name: ev.data.name,
-                  args: ev.data.args
-                };
+                tools[i] = Object.assign({}, tools[i], ev.data);
                 pump();
               } else if (ev.type === "plan") {
                 plan = Array.isArray(ev.data) ? ev.data : [];

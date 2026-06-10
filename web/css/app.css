@@ -382,6 +382,24 @@ body.no-anim *::after {
 .tool-call { padding: 3px 0; }
 .tool-call code { background: var(--code-bg); padding: 1px 6px; border-radius: 5px; font-size: 12px; }
 .tool-args { color: var(--text-3); margin-left: 8px; font-family: ui-monospace, monospace; font-size: 11.5px; }
+
+/* rich tool-call cards (status + input + output, one live card per tool) */
+.trace-count { display: inline-flex; align-items: center; justify-content: center; min-width: 17px; height: 17px; padding: 0 5px; border-radius: 9px; background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.tool-cards { padding: 8px 10px; display: flex; flex-direction: column; gap: 7px; white-space: normal; }
+.tool-card { border: 1px solid var(--border); border-radius: 8px; background: var(--bg); overflow: hidden; }
+.tool-card-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; }
+.tool-kind-ic { flex: 0 0 auto; color: var(--text-2); display: flex; }
+.tool-name { font-size: 12.5px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-status-ic { margin-left: auto; flex: 0 0 auto; display: flex; align-items: center; color: var(--text-3); }
+.tool-card.tool-completed .tool-status-ic { color: var(--accent); }
+.tool-card.tool-failed { border-color: color-mix(in srgb, #d9534f 45%, var(--border)); }
+.tool-card.tool-failed .tool-status-ic { color: #d9534f; }
+.tool-io { padding: 6px 10px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; line-height: 1.5; border-top: 1px solid var(--border); white-space: pre-wrap; overflow-wrap: anywhere; }
+.tool-in { color: var(--text-2); background: var(--code-bg); }
+.tool-in code { background: none; padding: 0; font-size: inherit; }
+.tool-out { color: var(--text-3); max-height: 160px; overflow: auto; }
+.tool-spin { width: 11px; height: 11px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--accent) 28%, transparent); border-top-color: var(--accent); animation: spin .7s linear infinite; display: inline-block; }
+.tool-spin-sm { width: 9px; height: 9px; margin-left: 6px; }
 .md-img { max-width: 100%; height: auto; border-radius: 9px; border: 1px solid var(--border); margin: 6px 0; display: block; }
 .md-mermaid { margin: 10px 0; padding: 12px; background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; overflow-x: auto; text-align: center; }
 .md-mermaid svg { max-width: 100%; height: auto; }
