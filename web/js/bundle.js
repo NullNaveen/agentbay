@@ -2645,7 +2645,7 @@ That's a lot of water for a moon smaller than ours.`;
           gap: 12,
           marginTop: 14
         }
-      }, PROV_ORDER.map(pid => {
+      }, PROV_ORDER.filter(pid => !(provs[pid] && provs[pid].from_agent && !provs[pid].key_set)).map(pid => {
         const p = provs[pid],
           en = enabled[pid] || [],
           Ic = I[PIC[pid]] || I.Bot;
@@ -2733,7 +2733,9 @@ That's a lot of water for a moon smaller than ours.`;
             color: "var(--text-3)"
           }
         }, en.length ? en.length + " model" + (en.length === 1 ? "" : "s") + " enabled" : "tap to set up"));
-      })));
+      })), /*#__PURE__*/React.createElement(AgentProvidersCard, {
+        onToast: onToast
+      }));
     }
 
     // ---- focused provider config ----
@@ -2891,6 +2893,99 @@ That's a lot of water for a moon smaller than ours.`;
       className: "btn btn-outline",
       onClick: () => setActiveProv(pid)
     }, "Set as active")));
+  }
+
+  // ---- Add agent-backed providers (Nous Portal OAuth, Copilot, Bedrock, …) with NO
+  //      key — they route through the local agent, which already holds the creds. ----
+  function AgentProvidersCard({
+    onToast
+  }) {
+    const [data, setData] = React.useState(null); // {providers:[{id,label,models,added}], kind}
+    const [busy, setBusy] = React.useState("");
+    const load = () => fetch("/api/agent/providers").then(r => r.json()).then(setData).catch(() => {});
+    React.useEffect(() => {
+      load();
+    }, []);
+    if (!data || !data.kind || !(data.providers || []).length) return null; // only when a local agent backs chat
+    const toggle = p => {
+      setBusy(p.id);
+      fetch("/api/providers/add-agent", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          id: p.id,
+          add: !p.added
+        })
+      }).then(r => r.json()).then(() => {
+        onToast && onToast({
+          type: "success",
+          title: (p.added ? "Removed " : "Added ") + p.label + (p.added ? "" : " · " + p.models + " models in the picker")
+        });
+        window.HermesData && window.HermesData.refreshModels && window.HermesData.refreshModels();
+        load();
+      }).catch(() => onToast && onToast({
+        type: "error",
+        title: "Couldn't update " + p.label
+      })).then(() => setBusy(""));
+    };
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginTop: 26
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "sec-title"
+    }, "From your agent \u2014 no key needed"), /*#__PURE__*/React.createElement("p", {
+      style: {
+        fontSize: 12.5,
+        color: "var(--text-3)",
+        margin: "4px 0 12px"
+      }
+    }, "Your ", data.kind === "openclaw" ? "OpenClaw" : "Hermes", " agent is already signed in to these (Nous Portal, Copilot, Bedrock\u2026). Add any to your model picker \u2014 they run through the agent with its own credentials."), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+        gap: 10
+      }
+    }, data.providers.map(p => /*#__PURE__*/React.createElement("div", {
+      key: p.id,
+      style: {
+        border: "1px solid var(--border)",
+        borderRadius: 11,
+        padding: "11px 13px",
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        background: p.added ? "color-mix(in srgb, var(--accent) 7%, transparent)" : "var(--surface)"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1,
+        minWidth: 0
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontWeight: 600,
+        fontSize: 13.5,
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis"
+      }
+    }, p.label), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11.5,
+        color: "var(--text-3)"
+      }
+    }, p.models, " model", p.models === 1 ? "" : "s")), /*#__PURE__*/React.createElement("button", {
+      className: "btn " + (p.added ? "btn-outline" : "btn-primary"),
+      disabled: busy === p.id,
+      style: {
+        padding: "5px 12px",
+        fontSize: 12.5
+      },
+      onClick: () => toggle(p)
+    }, busy === p.id ? "…" : p.added ? "Added ✓" : "Add")))));
   }
 
   // ---- Agent panel (install / detect / update Hermes & OpenClaw) ----

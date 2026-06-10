@@ -324,6 +324,7 @@ def public_config(cfg):
             "models": p.get("models", []),                 # enabled models
             "base_url": p.get("base_url", spec["base_url"]),
             "key_set": bool(p.get("key")),
+            "from_agent": bool(p.get("from_agent")),       # mirrored from the agent (handled in its own section)
             "free": spec.get("free", False),
             "free_note": spec.get("free_note", ""),
             "signup_url": spec.get("signup_url", ""),
@@ -347,16 +348,17 @@ def enabled_models(cfg):
     for pid, p in (cfg.get("providers") or {}).items():
         if not isinstance(p, dict):
             continue
-        if p.get("from_agent"):
-            continue                          # auto-imported from the agent → don't clutter the dropdown
+        from_agent = p.get("from_agent")
+        if from_agent and not p.get("user_added"):
+            continue                          # auto-imported but not explicitly added → hidden
         spec = PROVIDERS.get(pid, {})
-        if spec.get("needs_key") and not p.get("key"):
-            continue                          # needs a key but none saved → nothing to show
+        if not from_agent and spec.get("needs_key") and not p.get("key"):
+            continue                          # native provider needs a key but none saved → nothing to show
         plabel = spec.get("label") or p.get("label") or pid
         for m in (p.get("models") or []):
             if m:
                 out.append({"id": pid + "::" + m, "provider": pid, "model": m,
-                            "label": m, "provider_label": plabel})
+                            "label": m, "provider_label": plabel, "from_agent": bool(from_agent)})
     return out
 
 
@@ -2371,6 +2373,37 @@ def _import_agent_providers():
     return (({"providers": updates} if updates else {}), ids)
 
 
+def agent_providers_status():
+    """List the agent-backed providers (Nous Portal OAuth, Copilot, Bedrock, custom,
+    …) the user can add to their model picker with NO key — they route through the
+    agent, which holds the creds. Discovery also stows them in cfg (hidden) so adding
+    is just flipping `user_added`."""
+    try:
+        updates, _ids = _import_agent_providers()
+        if updates.get("providers"):
+            save_config(updates)              # stow discovered providers (from_agent, hidden)
+    except Exception:
+        pass
+    cfg = load_config()
+    items = []
+    for pid, p in (cfg.get("providers") or {}).items():
+        if isinstance(p, dict) and p.get("from_agent") and not p.get("key"):
+            items.append({"id": pid, "label": p.get("label") or pid,
+                          "models": len(p.get("models") or []), "added": bool(p.get("user_added"))})
+    items.sort(key=lambda x: (not x["added"], x["label"].lower()))
+    return {"providers": items, "kind": _agent_kind(cfg)}
+
+
+def set_agent_provider(pid, add):
+    """Show/hide an agent-backed provider in the model picker (toggles user_added)."""
+    cfg = load_config()
+    p = (cfg.get("providers") or {}).get(pid)
+    if not isinstance(p, dict) or not p.get("from_agent"):
+        return False
+    save_config({"providers": {pid: {"user_added": bool(add)}}})
+    return True
+
+
 def _latest_user(messages):
     for m in reversed(messages or []):
         if m.get("role") == "user" and m.get("content"):
@@ -3392,6 +3425,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/agent/reasoning-effort":
             return self._send(200, {"effort": get_reasoning_effort(), "options": list(_REASONING_EFFORTS),
                                     "available": _agent_kind(load_config()) == "hermes"})
+        if path == "/api/agent/providers":
+            return self._send(200, agent_providers_status())
         if path == "/api/import/sessions":
             try:
                 return self._send(200, {"sessions": read_agent_sessions()})
@@ -3640,6 +3675,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/agent/reasoning-effort":
             ok, msg = set_reasoning_effort(data.get("effort"))
             return self._send(200 if ok else 400, {"ok": ok, "effort": get_reasoning_effort(), "message": msg})
+        if path == "/api/providers/add-agent":
+            ok = set_agent_provider(data.get("id"), data.get("add", True))
+            return self._send(200 if ok else 404, {"ok": ok, "models": enabled_models(load_config())})
         if path == "/api/followups":
             cfg = load_config()
             res = gen_followups(cfg, data.get("messages") or [], provider=data.get("provider"), model=data.get("model"))

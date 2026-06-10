@@ -1319,7 +1319,7 @@ That's a lot of water for a moon smaller than ours.`;
             tag for no-cost tiers.
           </p>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12, marginTop: 14 }}>
-            {PROV_ORDER.map((pid) => {
+            {PROV_ORDER.filter((pid) => !(provs[pid] && provs[pid].from_agent && !provs[pid].key_set)).map((pid) => {
               const p = provs[pid], en = enabled[pid] || [], Ic = I[PIC[pid]] || I.Bot;
               const connected = p.key_set || (!p.needs_key && en.length) || pid === "local";
               return (
@@ -1342,6 +1342,7 @@ That's a lot of water for a moon smaller than ours.`;
               );
             })}
           </div>
+          <AgentProvidersCard onToast={onToast} />
         </div>
       );
     }
@@ -1389,6 +1390,44 @@ That's a lot of water for a moon smaller than ours.`;
             {en.length > 0 && active !== pid && <button className="btn btn-outline" onClick={() => setActiveProv(pid)}>Set as active</button>}
           </div>
         )}
+      </div>
+    );
+  }
+
+  // ---- Add agent-backed providers (Nous Portal OAuth, Copilot, Bedrock, …) with NO
+  //      key — they route through the local agent, which already holds the creds. ----
+  function AgentProvidersCard({ onToast }) {
+    const [data, setData] = React.useState(null);   // {providers:[{id,label,models,added}], kind}
+    const [busy, setBusy] = React.useState("");
+    const load = () => fetch("/api/agent/providers").then((r) => r.json()).then(setData).catch(() => {});
+    React.useEffect(() => { load(); }, []);
+    if (!data || !data.kind || !(data.providers || []).length) return null;   // only when a local agent backs chat
+    const toggle = (p) => {
+      setBusy(p.id);
+      fetch("/api/providers/add-agent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: p.id, add: !p.added }) })
+        .then((r) => r.json()).then(() => {
+          onToast && onToast({ type: "success", title: (p.added ? "Removed " : "Added ") + p.label + (p.added ? "" : " · " + p.models + " models in the picker") });
+          window.HermesData && window.HermesData.refreshModels && window.HermesData.refreshModels();
+          load();
+        }).catch(() => onToast && onToast({ type: "error", title: "Couldn't update " + p.label })).then(() => setBusy(""));
+    };
+    return (
+      <div style={{ marginTop: 26 }}>
+        <div className="sec-title">From your agent — no key needed</div>
+        <p style={{ fontSize: 12.5, color: "var(--text-3)", margin: "4px 0 12px" }}>Your {data.kind === "openclaw" ? "OpenClaw" : "Hermes"} agent is already signed in to these (Nous Portal, Copilot, Bedrock…). Add any to your model picker — they run through the agent with its own credentials.</p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
+          {data.providers.map((p) => (
+            <div key={p.id} style={{ border: "1px solid var(--border)", borderRadius: 11, padding: "11px 13px", display: "flex", alignItems: "center", gap: 10, background: p.added ? "color-mix(in srgb, var(--accent) 7%, transparent)" : "var(--surface)" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: 13.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.label}</div>
+                <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>{p.models} model{p.models === 1 ? "" : "s"}</div>
+              </div>
+              <button className={"btn " + (p.added ? "btn-outline" : "btn-primary")} disabled={busy === p.id} style={{ padding: "5px 12px", fontSize: 12.5 }} onClick={() => toggle(p)}>
+                {busy === p.id ? "…" : p.added ? "Added ✓" : "Add"}
+              </button>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
