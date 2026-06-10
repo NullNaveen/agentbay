@@ -61,7 +61,6 @@
     ThumbsDown: S(["M17 14V2", "M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"]),
     Refresh: S(["M3 12a9 9 0 0 1 15-6.7L21 8", "M21 3v5h-5", "M21 12a9 9 0 0 1-15 6.7L3 16", "M3 21v-5h5"]),
     Paperclip: S(["m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"]),
-    Mic: S([R({ x: 9, y: 2, width: 6, height: 11, rx: 3 }), "M19 10v1a7 7 0 0 1-14 0v-1", "M12 18v4", "M8 22h8"]),
     ArrowUp: S(["M12 19V5", "m5 12 7-7 7 7"]),
     ArrowDown: S(["M12 5v14", "m19 12-7 7-7-7"]),
     Sun: S([C({ cx: 12, cy: 12, r: 4 }), "M12 2v2", "M12 20v2", "m4.93 4.93 1.41 1.41", "m17.66 17.66 1.41 1.41", "M2 12h2", "M20 12h2", "m6.34 17.66-1.41 1.41", "m19.07 4.93-1.41 1.41"]),
@@ -202,103 +201,9 @@
     return a.slice(0, 3);
   }
 
-  // ---- seed sessions ----
-  const M = (role, content, extra = {}) => ({ role, content, ...extra });
-
-  const reply_debounce =
-`Great question. A **debounce** waits until the activity stops before running your function — perfect for search inputs and resize handlers.
-
-\`\`\`js
-function debounce(fn, wait = 300) {
-  let timer;
-  return (...args) => {
-    clearTimeout(timer);
-    timer = setTimeout(() => fn(...args), wait);
-  };
-}
-
-// usage
-input.addEventListener("input", debounce(e => {
-  search(e.target.value);
-}, 250));
-\`\`\`
-
-Here's what's happening:
-
-1. Every call **clears** the previous timer.
-2. A fresh timer is set for \`wait\` ms.
-3. \`fn\` only fires once the calls *stop* for that whole window.
-
-> Tip: use \`throttle\` instead when you want a steady cadence (e.g. scroll position) rather than "wait for quiet."`;
-
-  const reply_space =
-`Here's a fun one 🌊 — well, about water on a *moon*:
-
-Jupiter's moon **Europa** likely hides a salty ocean beneath its icy shell that holds **more than twice the liquid water of all of Earth's oceans combined**.
-
-A few things that make it remarkable:
-
-- The ice crust is estimated at **15–25 km** thick.
-- Tidal flexing from Jupiter keeps the interior warm enough to stay liquid.
-- NASA's *Europa Clipper* will make ~50 close flybys to study it.
-
-The math, roughly:
-
-$$V_{ocean} \\approx 3 \\times 10^{9}\\ \\text{km}^3$$
-
-That's a lot of water for a moon smaller than ours.`;
-
-  const SEED = [
-    { id: "s1", title: "Debounce vs throttle in JS", model: "hermes-pro", group: "Today", pinned: true, tags: ["code"], updated: Date.now() - 6e5,
-      messages: [ M("user", "What's the difference between debounce and throttle? Show me a code snippet."),
-        M("assistant", reply_debounce, { model: "hermes-pro", thought: 4, ts: "2:14 PM" }) ] },
-    { id: "s2", title: "Surprising ocean facts", model: "hermes-fast", group: "Today", tags: [], updated: Date.now() - 36e5,
-      messages: [ M("user", "Tell me a genuinely surprising fun fact about the ocean."),
-        M("assistant", reply_space, { model: "hermes-fast", thought: 2, ts: "11:02 AM" }) ] },
-    { id: "s3", title: "Cozy coffee shop names", model: "hermes-pro", group: "Yesterday", tags: ["writing"], updated: Date.now() - 9e7,
-      messages: [ M("user", "Brainstorm 10 cozy, original names for a neighborhood coffee shop.") ] },
-    { id: "s4", title: "Invoice follow-up email", model: "hermes-fast", group: "Yesterday", tags: ["writing"], updated: Date.now() - 1.1e8,
-      messages: [ M("user", "Help me write a friendly but firm email about an overdue invoice.") ] },
-    { id: "s5", title: "Explain vaccines simply", model: "hermes-reason", group: "Previous 7 Days", tags: [], updated: Date.now() - 3.5e8,
-      messages: [ M("user", "Explain how vaccines work like I'm five.") ] },
-    { id: "s6", title: "Biology flashcards: cells", model: "hermes-pro", group: "Previous 7 Days", tags: ["study"], updated: Date.now() - 4.2e8,
-      messages: [ M("user", "Make me 5 flashcards on cell structure.") ] },
-    { id: "s7", title: "Trip plan: 3 days in Lisbon", model: "hermes-pro", group: "Previous 30 Days", tags: ["travel"], updated: Date.now() - 12e8,
-      messages: [ M("user", "Plan a relaxed 3-day Lisbon itinerary.") ] },
-    { id: "s8", title: "Resignation letter draft", model: "hermes-fast", group: "Previous 30 Days", tags: ["writing"], updated: Date.now() - 16e8,
-      messages: [ M("user", "Draft a polite two-week resignation letter.") ] },
-    { id: "s9", title: "SQL group by help", model: "hermes-reason", group: "Older", tags: ["code"], updated: Date.now() - 50e8,
-      messages: [ M("user", "Why is my GROUP BY query returning duplicates?") ] },
-    { id: "s10", title: "Sourdough troubleshooting", model: "hermes-fast", group: "Older", tags: [], updated: Date.now() - 70e8,
-      messages: [ M("user", "My sourdough is too dense. What went wrong?") ] },
-  ];
 
   const GROUP_ORDER = ["Today", "Yesterday", "Previous 7 Days", "Previous 30 Days", "Older"];
 
-  // ---- canned reply generator (heuristic, keyword-based) ----
-  function generateReply(prompt) {
-    const p = prompt.toLowerCase();
-    if (/debounce|throttle|code|javascript|function|snippet/.test(p)) return reply_debounce;
-    if (/ocean|space|fact|europa|water/.test(p)) return reply_space;
-    if (/coffee|name|brainstorm/.test(p))
-      return `Here are some cozy, original options 🍂\n\n1. **The Slow Pour**\n2. **Marigold & Bean**\n3. **Hearth & Crema**\n4. **The Quiet Cup**\n5. **Northbound Coffee**\n6. **Ember Lane**\n7. **Folk & Foam**\n8. **The Daily Drift**\n9. **Mornings, Maybe**\n10. **Pocket Park Coffee**\n\nWant me to riff on a particular vibe — woodsy, retro, minimalist?`;
-    if (/email|invoice|write|letter|resign/.test(p))
-      return `Here's a draft you can adapt:\n\n> **Subject:** Quick note on invoice #1042\n>\n> Hi Jordan,\n>\n> Hope you're doing well! I'm following up on invoice **#1042** ($2,400), which was due on the 15th. I wanted to make sure it didn't slip through the cracks.\n>\n> Could you let me know the expected payment date? Happy to resend the invoice if helpful.\n>\n> Thanks so much,\n> Alex\n\nKeeps it warm but clear. Want a firmer second-reminder version too?`;
-    if (/vaccine|explain|how does|eli5|five/.test(p))
-      return `Imagine your body has a tiny army 🛡️ that fights germs.\n\nA **vaccine** is like showing that army a *wanted poster* of a germ — a harmless picture of it. The army studies the poster and practices fighting.\n\nSo later, if the **real** germ shows up, your army already knows exactly what it looks like and beats it *fast* — before you even feel sick.\n\nThat's it: a vaccine is practice for your immune system, using a safe stand-in instead of the dangerous germ.`;
-    return `Happy to help with that! Here's how I'd approach it:\n\n- First, let's clarify the goal so the answer is actually useful.\n- Then I'll give you a concrete, step-by-step path.\n- Finally, a couple of options depending on your constraints.\n\nTo tailor this: what's the **context** here, and is there a deadline or format you need? Tell me a bit more and I'll get specific.`;
-  }
-
-  function genFollowups(prompt) {
-    const p = prompt.toLowerCase();
-    if (/debounce|throttle|code|function/.test(p))
-      return ["Show me the throttle version too", "How do I cancel a pending debounce?", "Add a leading-edge option", "Write a React useDebounce hook"];
-    if (/ocean|space|fact/.test(p))
-      return ["Tell me another surprising one", "How deep is the Europa ocean really?", "What's the Europa Clipper mission?", "Compare it to Earth's oceans"];
-    if (/coffee|name/.test(p))
-      return ["Make 5 more with a woodsy vibe", "Check if any are trademarked", "Suggest a tagline for #2", "What about a logo concept?"];
-    return ["Can you give an example?", "Make it shorter", "Explain the first point more", "What are the trade-offs?"];
-  }
 
   // ---- minimal, safe markdown renderer → HTML string ----
   function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
@@ -434,8 +339,8 @@ That's a lot of water for a moon smaller than ours.`;
   }
 
   window.HermesData = {
-    MODELS, SUGGESTIONS, SEED, GROUP_ORDER, refreshModels, PROVIDER_ICON,
-    pickSuggestions, generateReply, genFollowups, renderMarkdown, enhanceRich,
+    MODELS, SUGGESTIONS, GROUP_ORDER, refreshModels, PROVIDER_ICON,
+    pickSuggestions, renderMarkdown, enhanceRich,
   };
 })();
 
@@ -1035,33 +940,9 @@ That's a lot of water for a moon smaller than ours.`;
     );
   }
 
-  /* ---------- Mic overlay (S18) ---------- */
-  function MicOverlay({ onStop, onCancel }) {
-    const [t, setT] = useState(0);
-    useEffect(() => { const iv = setInterval(() => setT((x) => x + 1), 1000); return () => clearInterval(iv); }, []);
-    const mm = String(Math.floor(t / 60)).padStart(2, "0"), ss = String(t % 60).padStart(2, "0");
-    return (
-      <div className="mic-overlay" role="dialog" aria-label="Voice input">
-        <div className="waveform">
-          {Array.from({ length: 28 }).map((_, i) => (
-            <div key={i} className="bar" style={{
-              height: (18 + Math.abs(Math.sin(i * 0.9)) * 60) + "px",
-              animationDelay: (i * 0.05) + "s",
-              animationDuration: (0.7 + (i % 5) * 0.12) + "s",
-            }} />
-          ))}
-        </div>
-        <div className="mic-label">Listening…</div>
-        <div className="mic-time">{mm}:{ss}</div>
-        <button className="mic-stop" aria-label="Stop recording" onClick={onStop}><span className="sq" /></button>
-        <button onClick={onCancel} style={{ color: "rgba(255,255,255,.6)", fontSize: 14 }}>Cancel</button>
-      </div>
-    );
-  }
-
   /* ---------- Composer ---------- */
   function Composer({ value, onChange, onSend, onStop, streaming, attachments, onAttach, onRemoveAttach, onFiles,
-    placeholder, suggestChips, onSuggestChip, onMic, focusKey, commands }) {
+    placeholder, suggestChips, onSuggestChip, focusKey, commands }) {
     const taRef = useRef(null);
     const [focused, setFocused] = useState(false);
     const [launching, setLaunching] = useState(false);
@@ -1215,7 +1096,7 @@ That's a lot of water for a moon smaller than ours.`;
     );
   }
 
-  window.Chat = { Thread, Composer, MicOverlay, Home, modelMeta };
+  window.Chat = { Thread, Composer, Home, modelMeta };
 })();
 
 
@@ -2483,7 +2364,7 @@ That's a lot of water for a moon smaller than ours.`;
       { v: "3.0.1", d: "Refined the streaming animation & added a thinking mascot." },
       { v: "3.0.0", d: "Brand-new simplified interface for everyday chat." },
       { v: "2.8.4", d: "Faster search across chats and messages." },
-      { v: "2.8.0", d: "Voice input with live waveform." },
+      { v: "2.8.0", d: "Live task plan, rich tool-call cards & a context meter." },
       { v: "2.7.2", d: "Share links now include a QR code." },
     ];
     return (
@@ -3587,7 +3468,7 @@ Object.assign(window, {
   const I = window.Icons;
   const D = window.HermesData;
   const { Modal, ToastProvider, useToast, fireConfetti, useLocal } = window.UI;
-  const { Thread, Composer, MicOverlay, Home, modelMeta } = window.Chat;
+  const { Thread, Composer, Home, modelMeta } = window.Chat;
   const Mo = window.Modals;
   const V = window.Views;
   const Hub = window.Hub;
@@ -4148,7 +4029,6 @@ Object.assign(window, {
     const openChat = (id) => {
       if (streaming) stopStream();
       setActiveId(id); setMobileOpen(false); setRenaming(false);
-      // mark continued seed chats: if only user msg, auto-generate a reply lazily? leave as-is.
     };
 
     const pickModel = (id) => {
