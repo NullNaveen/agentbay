@@ -1869,6 +1869,47 @@
     );
   }
 
+  // ---- Password lock: enable/disable a real server-side login wall ----
+  function PasswordLockCard({ onToast }) {
+    const [status, setStatus] = React.useState(null);   // {enabled, authed}
+    const [pw, setPw] = React.useState("");
+    const [busy, setBusy] = React.useState(false);
+    const load = () => fetch("/api/auth/status").then((r) => r.json()).then(setStatus).catch(() => {});
+    React.useEffect(() => { load(); }, []);
+    if (!status) return null;
+    const post = (url, body, okMsg) => {
+      setBusy(true);
+      return fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) })
+        .then((r) => r.json()).then((d) => {
+          if (d.ok) { onToast && onToast({ type: "success", title: okMsg }); setPw(""); load(); }
+          else onToast && onToast({ type: "error", title: d.error || "Failed" });
+          return d;
+        }).catch(() => onToast && onToast({ type: "error", title: "Network error" })).then((d) => { setBusy(false); return d; });
+    };
+    return (
+      <div className="set-section" style={{ marginTop: 24 }}>
+        <div className="sec-title">Password lock</div>
+        <p style={{ fontSize: 12.5, color: "var(--text-3)", margin: "4px 0 12px" }}>
+          Require a password before AgentBay loads — protects it when you open it to the network or share a link. Stored only as a salted hash on this device.
+        </p>
+        {status.enabled ? (
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ fontSize: 13, color: "var(--green)", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 5 }}><I.Lock size={14} /> Lock is on</span>
+            <button className="btn btn-outline" disabled={busy} onClick={() => post("/api/auth/disable", {}, "Password lock turned off")}>Turn off</button>
+            <button className="btn btn-ghost" disabled={busy} onClick={() => fetch("/api/auth/logout", { method: "POST" }).then(() => location.reload())}>Log out</button>
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <input className="field" type="password" placeholder="Set a password (min 4 chars)" value={pw}
+              onChange={(e) => setPw(e.target.value)} style={{ maxWidth: 280 }}
+              onKeyDown={(e) => { if (e.key === "Enter" && pw.length >= 4) post("/api/auth/setup", { password: pw }, "Password lock on"); }} />
+            <button className="btn btn-primary" disabled={busy || pw.length < 4} onClick={() => post("/api/auth/setup", { password: pw }, "Password lock on")}>Enable</button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function Settings({ s, set, theme, onTheme, onClose, onDeleteAll, onImport, onExportAll, defaultModel, onDefaultModel, onToast }) {
     const [tab, setTab] = useState("general");
 
@@ -1922,6 +1963,7 @@
                     }).catch(() => onToast({ type: "error", title: "Couldn't add shortcut" }));
                   }}><I.Download size={15} /> Add to Desktop</button>
                 </Row>
+                <PasswordLockCard onToast={onToast} />
               </div>
             )}
 
@@ -4318,8 +4360,48 @@ Object.assign(window, {
     );
   }
 
+  // ---- Optional password lock: a real server-side login wall (off by default) ----
+  function LoginScreen({ onAuthed }) {
+    const [pw, setPw] = React.useState("");
+    const [err, setErr] = React.useState("");
+    const [busy, setBusy] = React.useState(false);
+    const submit = (e) => {
+      if (e) e.preventDefault();
+      if (!pw || busy) return;
+      setBusy(true); setErr("");
+      fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: pw }) })
+        .then((r) => r.json()).then((d) => {
+          if (d.ok) onAuthed();
+          else { setErr(d.error || "Wrong password"); setBusy(false); }
+        }).catch(() => { setErr("Network error"); setBusy(false); });
+    };
+    return (
+      <div className="login-screen">
+        <form className="login-card anim-fadeup" onSubmit={submit}>
+          <div className="login-glyph"><window.HermesGlyph size={44} /></div>
+          <h1 className="login-title">AgentBay</h1>
+          <p className="login-sub">Enter your password to unlock</p>
+          <input className="login-input" type="password" autoFocus placeholder="Password"
+            value={pw} onChange={(e) => { setPw(e.target.value); setErr(""); }} />
+          {err && <div className="login-err">{err}</div>}
+          <button className="login-btn" type="submit" disabled={busy || !pw}>{busy ? "Checking…" : "Unlock"}</button>
+        </form>
+      </div>
+    );
+  }
+
+  function AuthGate({ children }) {
+    const [st, setSt] = React.useState(null);   // {enabled, authed}
+    React.useEffect(() => {
+      fetch("/api/auth/status").then((r) => r.json()).then(setSt).catch(() => setSt({ enabled: false, authed: true }));
+    }, []);
+    if (!st) return null;                        // brief: don't flash the app before we know
+    if (st.enabled && !st.authed) return <LoginScreen onAuthed={() => setSt({ enabled: true, authed: true })} />;
+    return children;
+  }
+
   window.HermesApp = function () {
-    return <ToastProvider><App /><window.TweaksController /></ToastProvider>;
+    return <ToastProvider><AuthGate><App /></AuthGate><window.TweaksController /></ToastProvider>;
   };
 })();
 

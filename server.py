@@ -13,6 +13,7 @@ Run:  python3 server.py [--port 8700] [--host 127.0.0.1] [--no-browser]
 import argparse
 import base64
 import hashlib
+import hmac
 import datetime
 import io
 import json
@@ -1306,6 +1307,59 @@ def run_install(job_id, agent_id, which="install"):
 SHARE = {"active": False, "token": None, "url": None, "provider": None}
 SERVER = {"host": "127.0.0.1", "port": 8700}
 _share_proc = None
+
+
+# ---- password lock (optional real login) ----------------------------------
+# When cfg["auth"].enabled, every data API requires a valid ab_auth cookie. The
+# password is stored only as a PBKDF2 hash + salt; the cookie is a signed,
+# stateless token (HMAC of its expiry with a per-install secret), so it survives
+# restarts and needs no server-side session store.
+_AUTH_TTL = 7 * 86400
+
+
+def _pw_hash(pw, salt):
+    return hashlib.pbkdf2_hmac("sha256", (pw or "").encode(), bytes.fromhex(salt), 200_000).hex()
+
+
+def _pw_ok(cfg_auth, pw):
+    h, s = cfg_auth.get("pw_hash"), cfg_auth.get("pw_salt")
+    if not (h and s):
+        return False
+    try:
+        return hmac.compare_digest(_pw_hash(pw, s), h)
+    except Exception:
+        return False
+
+
+def _auth_issue(secret, ttl=_AUTH_TTL):
+    exp = str(int(time.time()) + ttl)
+    sig = hmac.new(bytes.fromhex(secret), exp.encode(), hashlib.sha256).hexdigest()
+    return exp + "." + sig
+
+
+def _auth_token_valid(cfg_auth, token):
+    secret = cfg_auth.get("secret") or ""
+    if not token or "." not in token or not secret:
+        return False
+    exp, sig = token.split(".", 1)
+    try:
+        if int(exp) < time.time():
+            return False
+        want = hmac.new(bytes.fromhex(secret), exp.encode(), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(sig, want)
+    except Exception:
+        return False
+
+
+def _auth_enabled(cfg=None):
+    a = ((cfg or load_config()).get("auth") or {})
+    return bool(a.get("enabled") and a.get("pw_hash"))
+
+
+def _auth_cookie(token, clear=False):
+    if clear:
+        return "ab_auth=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
+    return "ab_auth=%s; Path=/; HttpOnly; SameSite=Lax; Max-Age=%d" % (token, _AUTH_TTL)
 _share_lock = threading.RLock()
 
 BIN_DIR = CONFIG_DIR / "bin"   # AgentBay's own tool dir — self-contained, no brew/winget needed
@@ -3348,18 +3402,40 @@ class Handler(BaseHTTPRequestHandler):
                 return True
         return False
 
+    def _cookie(self, name):
+        for part in (self.headers.get("Cookie") or "").split(";"):
+            part = part.strip()
+            if part.startswith(name + "="):
+                return part[len(name) + 1:]
+        return None
+
+    def _auth_ok(self):
+        """When the password lock is on, gate the data APIs. The login screen
+        itself (index.html, static assets, /api/auth/*, health) stays reachable so
+        the user can sign in."""
+        a = load_config().get("auth") or {}
+        if not (a.get("enabled") and a.get("pw_hash")):
+            return True
+        p = self.path.split("?", 1)[0]
+        if p in ("/", "/index.html", "/api/health") or p.startswith("/static/") or p.startswith("/api/auth/"):
+            return True
+        return _auth_token_valid(a, self._cookie("ab_auth"))
+
     def _gate(self):
         """Return True to proceed; otherwise emit 401 and return False."""
-        if self._share_ok():
-            return True
-        if self.path.split("?", 1)[0].startswith("/api/"):
-            self._send(401, {"error": "access key required"})
-        else:
-            self._send(401, "<!doctype html><meta charset=utf-8><title>Access required</title>"
-                            "<body style='font:16px system-ui;max-width:30rem;margin:18vh auto;padding:0 1rem;text-align:center'>"
-                            "<h2>Access key required</h2><p>Open the full share link — it includes the access key after <code>?k=</code>.</p></body>",
-                       "text/html; charset=utf-8")
-        return False
+        if not self._share_ok():
+            if self.path.split("?", 1)[0].startswith("/api/"):
+                self._send(401, {"error": "access key required"})
+            else:
+                self._send(401, "<!doctype html><meta charset=utf-8><title>Access required</title>"
+                                "<body style='font:16px system-ui;max-width:30rem;margin:18vh auto;padding:0 1rem;text-align:center'>"
+                                "<h2>Access key required</h2><p>Open the full share link — it includes the access key after <code>?k=</code>.</p></body>",
+                           "text/html; charset=utf-8")
+            return False
+        if not self._auth_ok():
+            self._send(401, {"error": "login required"})
+            return False
+        return True
 
     def _read_json(self):
         n = int(self.headers.get("Content-Length", 0))
@@ -3394,6 +3470,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, public_config(load_config()))
         if path == "/api/health":
             return self._send(200, {"ok": True, "version": "1.0"})
+        if path == "/api/auth/status":
+            a = load_config().get("auth") or {}
+            enabled = bool(a.get("enabled") and a.get("pw_hash"))
+            authed = (not enabled) or _auth_token_valid(a, self._cookie("ab_auth"))
+            return self._send(200, {"enabled": enabled, "authed": authed})
         if path == "/api/providers":
             cfg = load_config()
             return self._send(200, public_config(cfg)["providers"])
@@ -3672,6 +3753,32 @@ class Handler(BaseHTTPRequestHandler):
             # Real Stop — cancel the in-flight agent turn for this session.
             stopped = _cancel_turn(data.get("session_id"))
             return self._send(200, {"stopped": bool(stopped)})
+        if path == "/api/auth/setup":
+            # Turn the lock ON and set the password. Once enabled, changing it
+            # requires a valid session (you must be logged in).
+            a = load_config().get("auth") or {}
+            if a.get("enabled") and a.get("pw_hash") and not _auth_token_valid(a, self._cookie("ab_auth")):
+                return self._send(401, {"ok": False, "error": "log in first to change the password"})
+            pw = (data.get("password") or "")
+            if len(pw) < 4:
+                return self._send(400, {"ok": False, "error": "password must be at least 4 characters"})
+            salt, secret = secrets.token_hex(16), secrets.token_hex(32)
+            save_config({"auth": {"enabled": True, "pw_salt": salt, "pw_hash": _pw_hash(pw, salt), "secret": secret}})
+            return self._send(200, {"ok": True}, cookie=_auth_cookie(_auth_issue(secret)))
+        if path == "/api/auth/login":
+            a = load_config().get("auth") or {}
+            if _pw_ok(a, data.get("password") or ""):
+                return self._send(200, {"ok": True}, cookie=_auth_cookie(_auth_issue(a.get("secret") or "")))
+            return self._send(401, {"ok": False, "error": "wrong password"})
+        if path == "/api/auth/logout":
+            return self._send(200, {"ok": True}, cookie=_auth_cookie(None, clear=True))
+        if path == "/api/auth/disable":
+            # Turn the lock OFF — requires the current password (or a valid session).
+            a = load_config().get("auth") or {}
+            if _pw_ok(a, data.get("password") or "") or _auth_token_valid(a, self._cookie("ab_auth")):
+                save_config({"auth": {"enabled": False}})
+                return self._send(200, {"ok": True}, cookie=_auth_cookie(None, clear=True))
+            return self._send(401, {"ok": False, "error": "wrong password"})
         if path == "/api/agent/reasoning-effort":
             ok, msg = set_reasoning_effort(data.get("effort"))
             return self._send(200 if ok else 400, {"ok": ok, "effort": get_reasoning_effort(), "message": msg})

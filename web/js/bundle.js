@@ -4206,6 +4206,118 @@
       }
     }, "Uses your Tailscale tailnet. Needs Funnel enabled for this machine in the Tailscale admin (HTTPS + the \u201Cfunnel\u201D node attribute).")));
   }
+
+  // ---- Password lock: enable/disable a real server-side login wall ----
+  function PasswordLockCard({
+    onToast
+  }) {
+    const [status, setStatus] = React.useState(null); // {enabled, authed}
+    const [pw, setPw] = React.useState("");
+    const [busy, setBusy] = React.useState(false);
+    const load = () => fetch("/api/auth/status").then(r => r.json()).then(setStatus).catch(() => {});
+    React.useEffect(() => {
+      load();
+    }, []);
+    if (!status) return null;
+    const post = (url, body, okMsg) => {
+      setBusy(true);
+      return fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(body || {})
+      }).then(r => r.json()).then(d => {
+        if (d.ok) {
+          onToast && onToast({
+            type: "success",
+            title: okMsg
+          });
+          setPw("");
+          load();
+        } else onToast && onToast({
+          type: "error",
+          title: d.error || "Failed"
+        });
+        return d;
+      }).catch(() => onToast && onToast({
+        type: "error",
+        title: "Network error"
+      })).then(d => {
+        setBusy(false);
+        return d;
+      });
+    };
+    return /*#__PURE__*/React.createElement("div", {
+      className: "set-section",
+      style: {
+        marginTop: 24
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "sec-title"
+    }, "Password lock"), /*#__PURE__*/React.createElement("p", {
+      style: {
+        fontSize: 12.5,
+        color: "var(--text-3)",
+        margin: "4px 0 12px"
+      }
+    }, "Require a password before AgentBay loads \u2014 protects it when you open it to the network or share a link. Stored only as a salted hash on this device."), status.enabled ? /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: 8,
+        alignItems: "center",
+        flexWrap: "wrap"
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 13,
+        color: "var(--green)",
+        fontWeight: 600,
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5
+      }
+    }, /*#__PURE__*/React.createElement(I.Lock, {
+      size: 14
+    }), " Lock is on"), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-outline",
+      disabled: busy,
+      onClick: () => post("/api/auth/disable", {}, "Password lock turned off")
+    }, "Turn off"), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost",
+      disabled: busy,
+      onClick: () => fetch("/api/auth/logout", {
+        method: "POST"
+      }).then(() => location.reload())
+    }, "Log out")) : /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: 8,
+        alignItems: "center",
+        flexWrap: "wrap"
+      }
+    }, /*#__PURE__*/React.createElement("input", {
+      className: "field",
+      type: "password",
+      placeholder: "Set a password (min 4 chars)",
+      value: pw,
+      onChange: e => setPw(e.target.value),
+      style: {
+        maxWidth: 280
+      },
+      onKeyDown: e => {
+        if (e.key === "Enter" && pw.length >= 4) post("/api/auth/setup", {
+          password: pw
+        }, "Password lock on");
+      }
+    }), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-primary",
+      disabled: busy || pw.length < 4,
+      onClick: () => post("/api/auth/setup", {
+        password: pw
+      }, "Password lock on")
+    }, "Enable")));
+  }
   function Settings({
     s,
     set,
@@ -4356,7 +4468,9 @@
       }
     }, /*#__PURE__*/React.createElement(I.Download, {
       size: 15
-    }), " Add to Desktop"))), tab === "interface" && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h3", {
+    }), " Add to Desktop")), /*#__PURE__*/React.createElement(PasswordLockCard, {
+      onToast: onToast
+    })), tab === "interface" && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h3", {
       style: {
         marginBottom: 18
       }
@@ -9374,7 +9488,88 @@ Object.assign(window, {
       size: 19
     })));
   }
+
+  // ---- Optional password lock: a real server-side login wall (off by default) ----
+  function LoginScreen({
+    onAuthed
+  }) {
+    const [pw, setPw] = React.useState("");
+    const [err, setErr] = React.useState("");
+    const [busy, setBusy] = React.useState(false);
+    const submit = e => {
+      if (e) e.preventDefault();
+      if (!pw || busy) return;
+      setBusy(true);
+      setErr("");
+      fetch("/api/auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          password: pw
+        })
+      }).then(r => r.json()).then(d => {
+        if (d.ok) onAuthed();else {
+          setErr(d.error || "Wrong password");
+          setBusy(false);
+        }
+      }).catch(() => {
+        setErr("Network error");
+        setBusy(false);
+      });
+    };
+    return /*#__PURE__*/React.createElement("div", {
+      className: "login-screen"
+    }, /*#__PURE__*/React.createElement("form", {
+      className: "login-card anim-fadeup",
+      onSubmit: submit
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "login-glyph"
+    }, /*#__PURE__*/React.createElement(window.HermesGlyph, {
+      size: 44
+    })), /*#__PURE__*/React.createElement("h1", {
+      className: "login-title"
+    }, "AgentBay"), /*#__PURE__*/React.createElement("p", {
+      className: "login-sub"
+    }, "Enter your password to unlock"), /*#__PURE__*/React.createElement("input", {
+      className: "login-input",
+      type: "password",
+      autoFocus: true,
+      placeholder: "Password",
+      value: pw,
+      onChange: e => {
+        setPw(e.target.value);
+        setErr("");
+      }
+    }), err && /*#__PURE__*/React.createElement("div", {
+      className: "login-err"
+    }, err), /*#__PURE__*/React.createElement("button", {
+      className: "login-btn",
+      type: "submit",
+      disabled: busy || !pw
+    }, busy ? "Checking…" : "Unlock")));
+  }
+  function AuthGate({
+    children
+  }) {
+    const [st, setSt] = React.useState(null); // {enabled, authed}
+    React.useEffect(() => {
+      fetch("/api/auth/status").then(r => r.json()).then(setSt).catch(() => setSt({
+        enabled: false,
+        authed: true
+      }));
+    }, []);
+    if (!st) return null; // brief: don't flash the app before we know
+    if (st.enabled && !st.authed) return /*#__PURE__*/React.createElement(LoginScreen, {
+      onAuthed: () => setSt({
+        enabled: true,
+        authed: true
+      })
+    });
+    return children;
+  }
   window.HermesApp = function () {
-    return /*#__PURE__*/React.createElement(ToastProvider, null, /*#__PURE__*/React.createElement(App, null), /*#__PURE__*/React.createElement(window.TweaksController, null));
+    return /*#__PURE__*/React.createElement(ToastProvider, null, /*#__PURE__*/React.createElement(AuthGate, null, /*#__PURE__*/React.createElement(App, null)), /*#__PURE__*/React.createElement(window.TweaksController, null));
   };
 })();
