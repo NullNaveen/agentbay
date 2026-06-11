@@ -52,6 +52,7 @@
     Tag: S(["M12.59 2.59A2 2 0 0 0 11.17 2H4a2 2 0 0 0-2 2v7.17a2 2 0 0 0 .59 1.42l8.41 8.41a2 2 0 0 0 2.83 0l6.59-6.59a2 2 0 0 0 0-2.83Z", C({ cx: 7, cy: 7, r: 1.2 })]),
     Pencil: S(["M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z"]),
     Copy: S([R({ x: 9, y: 9, width: 12, height: 12, rx: 2 }), "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"]),
+    Chart: S(["M3 3v18h18", "m7 14 4-4 3 3 5-6"]),
     Check: S(["M20 6 9 17l-5-5"]),
     CheckCircle: S(["M22 11.08V12a10 10 0 1 1-5.93-9.14", "m22 4-10 10.01-3-3"]),
     X: S(["M18 6 6 18", "M6 6l12 12"]),
@@ -541,6 +542,7 @@
     const {
       collapsed, mobileOpen, sessions, activeId, folders,
       onNewChat, onOpenChat, onOpenSearch, onOpenNotes, onOpenProjects, onOpenAgents, showAgents, onOpenSkills, showSkills,
+      onOpenDashboard, showDashboard,
       onNewFolder, onChatMenu, onToggleCollapse, user, onUserClick, onResize,
       groupOrder, theme,
     } = props;
@@ -584,6 +586,11 @@
             <span className="ic"><I.Search size={18} /></span><span className="sb-label">Search</span>
             {!collapsed && <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-faint)" }}>⌘K</span>}
           </button>
+          {showDashboard && (
+            <button className="sb-item" onClick={onOpenDashboard}>
+              <span className="ic"><I.Chart size={18} /></span><span className="sb-label">Dashboard</span>
+            </button>
+          )}
           <button className="sb-item" onClick={onOpenNotes}>
             <span className="ic"><I.Notebook size={18} /></span><span className="sb-label">Notes</span>
           </button>
@@ -713,7 +720,7 @@
   }
 
   /* ---------- A single assistant turn ---------- */
-  function AssistantTurn({ msg, streaming, isLast, onFollowup, onToast, showTimestamps, showThinking, showTools, onRegen, onRetry, avatars, latex, codeBlocks }) {
+  function AssistantTurn({ msg, streaming, isLast, onFollowup, onToast, showTimestamps, showThinking, showTools, showUsage, onRegen, onRetry, avatars, latex, codeBlocks }) {
     const meta = modelMeta(msg.model);
     const Ic = I[meta.icon] || I.Bot;
     const [vote, setVote] = useState(0);
@@ -826,7 +833,7 @@
             onInfo={() => onToast({ type: "info", title: meta.name, desc: "Generated in " + (msg.thought || 3) + "s · ~" + Math.max(1, Math.round(msg.content.length / 4)) + " tokens" })} />
         )}
 
-        {!streaming && msg.usage && msg.usage.size > 0 ? (() => {
+        {showUsage && !streaming && msg.usage && msg.usage.size > 0 ? (() => {
           const fmtTok = (n) => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k" : String(n);
           const pct = Math.min(100, Math.round((msg.usage.used / msg.usage.size) * 100));
           return (
@@ -927,7 +934,7 @@
             const liveMsg = isStreamingThis ? { ...m, content: streaming.text, reasoning: streaming.reasoning || m.reasoning, tools: streaming.tools && streaming.tools.length ? streaming.tools : m.tools, plan: streaming.plan && streaming.plan.length ? streaming.plan : m.plan, usage: streaming.usage || m.usage } : m;
             return <AssistantTurn key={i} msg={liveMsg} streaming={isStreamingThis} isLast={isLast}
               onFollowup={onFollowup} onToast={onToast} showTimestamps={settings.timestamps}
-              showThinking={settings.showThinking} showTools={settings.showTools} onRegen={onRegen}
+              showThinking={settings.showThinking} showTools={settings.showTools} showUsage={settings.showUsage === true} onRegen={onRegen}
               avatars={settings.avatars} latex={settings.latex} codeBlocks={settings.codeBlocks} />;
           })}
         </div>
@@ -1428,7 +1435,51 @@
     );
   }
 
-  function AgentPanel({ onToast }) {
+  // ---- Scheduled tasks: the agent's cron jobs (runs prompts on a timer) ----
+  function CronCard({ onToast }) {
+    const [data, setData] = React.useState(null);   // {available, jobs}
+    const [form, setForm] = React.useState({ name: "", schedule: "", prompt: "" });
+    const [busy, setBusy] = React.useState(false);
+    const load = () => fetch("/api/agent/cron").then((r) => r.json()).then(setData).catch(() => {});
+    React.useEffect(() => { load(); }, []);
+    if (!data) return null;
+    if (!data.available) return <p style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 8 }}>Scheduled tasks need a local Hermes agent.</p>;
+    const post = (body, okMsg) => {
+      setBusy(true);
+      fetch("/api/agent/cron", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+        .then((r) => r.json()).then((d) => {
+          setData((s) => ({ ...s, jobs: d.jobs || [] }));
+          onToast && onToast(d.ok ? { type: "success", title: okMsg } : { type: "error", title: d.message || "Failed" });
+          if (d.ok && body.action === "create") setForm({ name: "", schedule: "", prompt: "" });
+        }).catch(() => onToast && onToast({ type: "error", title: "Network error" })).then(() => setBusy(false));
+    };
+    return (
+      <div style={{ marginTop: 10 }}>
+        {(data.jobs || []).length === 0 && <p style={{ fontSize: 12.5, color: "var(--text-3)", margin: "4px 0 10px" }}>No scheduled tasks yet — create your first one below.</p>}
+        {(data.jobs || []).map((j) => (
+          <div key={j.id} className="cron-row">
+            <span className={"cron-dot" + (j.enabled ? " on" : "")} title={j.enabled ? "running on schedule" : "paused"} />
+            <span className="cron-name" title={j.prompt || j.script}>{j.name || j.id}</span>
+            <code className="cron-sched">{j.schedule}</code>
+            <button className="btn btn-ghost" disabled={busy} style={{ padding: "3px 9px", fontSize: 12 }}
+              onClick={() => post({ action: "toggle", id: j.id }, j.enabled ? "Paused " + j.name : "Resumed " + j.name)}>{j.enabled ? "Pause" : "Resume"}</button>
+            <button className="btn btn-ghost" disabled={busy} aria-label="Delete" style={{ padding: "3px 7px" }}
+              onClick={() => post({ action: "delete", id: j.id }, "Deleted " + j.name)}><I.Trash size={14} /></button>
+          </div>
+        ))}
+        <div className="cron-new">
+          <input className="field" placeholder="Name — e.g. Morning briefing" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          <input className="field" placeholder="When — e.g. every 30m · daily 09:00" value={form.schedule} onChange={(e) => setForm({ ...form, schedule: e.target.value })} />
+          <textarea className="field" placeholder="What should the agent do? e.g. Summarize my unread Telegram messages." value={form.prompt} style={{ minHeight: 54 }}
+            onChange={(e) => setForm({ ...form, prompt: e.target.value })} />
+          <button className="btn btn-primary" disabled={busy || !(form.name.trim() && form.schedule.trim() && form.prompt.trim())}
+            onClick={() => post({ action: "create", job: form }, "Task scheduled")}>Schedule task</button>
+        </div>
+      </div>
+    );
+  }
+
+  function AgentPanel({ onToast, s, set }) {
     const [agents, setAgents] = React.useState(null);
     const [upd, setUpd] = React.useState({});   // {agent:{update_available,current,latest}}
     const [log, setLog] = React.useState("");
@@ -1474,6 +1525,18 @@
         {log && <pre style={{ marginTop: 12, maxHeight: 200, overflow: "auto", background: "#0c0c10", color: "#cfe", padding: 12, borderRadius: 10, fontSize: 12, whiteSpace: "pre-wrap" }}>{log}</pre>}
         <AgentProfilesCard onToast={onToast} />
         <ReasoningEffortCard onToast={onToast} />
+        {s && set && (
+          <div style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 14, marginTop: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ flex: 1 }}>
+                <div className="sec-title">Scheduled tasks</div>
+                <p style={{ fontSize: 12.5, color: "var(--text-3)", margin: "4px 0 0" }}>Have the agent run prompts on a timer — daily briefings, recurring checks. Shares the agent's own schedule, so jobs run even when AgentBay is closed.</p>
+              </div>
+              <Switch on={s.scheduledTasks === true} onChange={(v) => set("scheduledTasks", v)} label="Scheduled tasks" />
+            </div>
+            {s.scheduledTasks === true && <CronCard onToast={onToast} />}
+          </div>
+        )}
         <BrowserUseCard onToast={onToast} />
       </div>
     );
@@ -1989,6 +2052,9 @@
                 <Row t="Agents (experimental)" d="Named personas you can pick per chat. Work in progress — off by default.">
                   <Switch on={s.agentsEnabled} onChange={(v) => set("agentsEnabled", v)} label="Agents" />
                 </Row>
+                <Row t="Dashboard" d="A visual overview of your chats and agent activity, in the sidebar. Off by default.">
+                  <Switch on={s.dashboard === true} onChange={(v) => set("dashboard", v)} label="Dashboard" />
+                </Row>
                 <div className="set-section" style={{ marginTop: 24 }}>
                   <div className="sec-title">Agent transparency</div>
                   <Row t="Show the agent's thinking" d="When the model reasons before answering, show that reasoning above the reply.">
@@ -1996,6 +2062,9 @@
                   </Row>
                   <Row t="Show tool calls" d="List the tools the agent used (terminal, web, files…) for each reply.">
                     <Switch on={s.showTools} onChange={(v) => set("showTools", v)} label="Show tools" />
+                  </Row>
+                  <Row t="Context meter" d="A small badge under each reply showing how much of the AI's memory window is in use (e.g. 15k / 1000k). Off by default.">
+                    <Switch on={s.showUsage === true} onChange={(v) => set("showUsage", v)} label="Context meter" />
                   </Row>
                 </div>
                 <div className="set-section" style={{ marginTop: 24 }}>
@@ -2032,7 +2101,7 @@
 
             {tab === "connections" && <ProvidersPanel onToast={onToast} />}
             {tab === "integrations" && <IntegrationsPanel onToast={onToast} />}
-            {tab === "agent" && <AgentPanel onToast={onToast} />}
+            {tab === "agent" && <AgentPanel onToast={onToast} s={s} set={set} />}
             {tab === "remote" && <RemotePanel onToast={onToast} />}
 
             {tab === "data" && (
@@ -2704,7 +2773,388 @@
     );
   }
 
-  window.Views = { Login, ModelMenu, Notes, Tour, OnboardingGate };
+  /* ---------- Dashboard: your chats & agent at a glance ----------
+     Every chart is hand-rolled SVG (no chart library, works offline) and chosen
+     to be readable by a non-technical person: a 24-hour clock, activity rings,
+     a flower of tool petals, a dot lane of reply speeds, a calendar of days. */
+  const DASH_COLORS = ["var(--accent)", "#7d9bd8", "#67b894", "#c98ab1", "#d8b25e", "#8893a8"];
+  const DASH_KIND = { execute: "Ran commands", read: "Read files", edit: "Edited files", search: "Searched",
+                      fetch: "Browsed the web", think: "Thought it through", delete: "Cleaned up", move: "Moved files", other: "Other tools" };
+  const DASH_SRC = { cli: "Terminal", acp: "AgentBay & editors", cron: "Scheduled jobs", telegram: "Telegram",
+                     api_server: "API", discord: "Discord", slack: "Slack", whatsapp: "WhatsApp", other: "Other" };
+
+  function dashNum(n) {
+    n = n || 0;
+    if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M";
+    if (n >= 1e3) return (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + "k";
+    return String(n);
+  }
+
+  function dashCrunch(sessions) {
+    const o = { chats: 0, you: 0, ai: 0, wordsYou: 0, wordsAi: 0, images: 0, tools: 0, byKind: {},
+                models: {}, hours: new Array(24).fill(0), days: {}, speeds: [], ctx: [], plansDone: 0, plansTotal: 0, top: [] };
+    (sessions || []).forEach((s) => {
+      const msgs = (s.messages || []).filter((m) => m && (m.role === "user" || m.role === "assistant"));
+      if (!msgs.length) return;
+      o.chats++;
+      o.top.push({ title: s.title || "Untitled", n: msgs.length });
+      msgs.forEach((m) => {
+        const d = new Date(m.t || s.updated || Date.now());
+        const key = d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate();
+        o.days[key] = (o.days[key] || 0) + 1;
+        // hour of day: new messages carry a real timestamp; older ones have a "2:14 PM" label
+        let hr = m.t ? d.getHours() : null;
+        if (hr == null && typeof m.ts === "string") {
+          const mt = m.ts.match(/(\d+):\d+\s*(AM|PM)?/i);
+          if (mt) { hr = parseInt(mt[1], 10) % 12; if (/pm/i.test(mt[2] || "")) hr += 12; }
+        }
+        if (hr != null && hr >= 0 && hr < 24) o.hours[hr]++;
+        const words = String(m.content || "").trim().split(/\s+/).filter(Boolean).length;
+        if (m.role === "user") {
+          o.you++; o.wordsYou += words;
+          if (m.images && m.images.length) o.images += m.images.length;
+        } else {
+          o.ai++; o.wordsAi += words;
+          if (m.model) o.models[m.model] = (o.models[m.model] || 0) + 1;
+          const secs = m.took || m.thought;
+          if (secs) o.speeds.push(Math.min(60, secs));
+          if (m.usage && m.usage.size > 0) o.ctx.push(Math.min(100, (m.usage.used / m.usage.size) * 100));
+          (m.tools || []).forEach((t) => { o.tools++; const k = (t && t.kind) || "other"; o.byKind[k] = (o.byKind[k] || 0) + 1; });
+          if (m.plan && m.plan.length) { o.plansTotal += m.plan.length; o.plansDone += m.plan.filter((p) => p.status === "completed").length; }
+        }
+      });
+    });
+    o.activeDays = Object.keys(o.days).length;
+    o.top.sort((a, b) => b.n - a.n); o.top = o.top.slice(0, 5);
+    return o;
+  }
+
+  // A 24-hour clock — each hand is an hour, longer = busier.
+  function ClockChart({ hours }) {
+    const W = 260, cx = W / 2, cy = 126, r0 = 42, rMax = 64;
+    const max = Math.max(1, Math.max.apply(null, hours));
+    const total = hours.reduce((a, b) => a + b, 0);
+    const peak = hours.indexOf(Math.max.apply(null, hours));
+    const fmt = (h) => h === 0 ? "12 AM" : h < 12 ? h + " AM" : h === 12 ? "12 PM" : (h - 12) + " PM";
+    return (
+      <svg viewBox={"0 0 " + W + " 252"} className="dash-svg" role="img" aria-label="Activity by hour">
+        {hours.map((n, h) => {
+          const a = (h / 24) * Math.PI * 2 - Math.PI / 2;
+          const len = n ? 8 + (n / max) * (rMax - 8) : 3;
+          return <line key={h} x1={cx + Math.cos(a) * r0} y1={cy + Math.sin(a) * r0}
+            x2={cx + Math.cos(a) * (r0 + len)} y2={cy + Math.sin(a) * (r0 + len)}
+            stroke={n && h === peak ? "var(--accent)" : "color-mix(in srgb, var(--accent) " + (n ? Math.round(26 + (n / max) * 50) : 13) + "%, transparent)"}
+            strokeWidth="6" strokeLinecap="round" />;
+        })}
+        {[["12 AM", 0], ["6 AM", 6], ["12 PM", 12], ["6 PM", 18]].map(([t, h]) => {
+          const a = (h / 24) * Math.PI * 2 - Math.PI / 2, rr = r0 + rMax + 15;
+          return <text key={t} x={cx + Math.cos(a) * rr} y={cy + Math.sin(a) * rr + 3.5} textAnchor="middle" className="dash-tick">{t}</text>;
+        })}
+        <text x={cx} y={cy - 3} textAnchor="middle" className="dash-center-big">{total ? fmt(peak) : "—"}</text>
+        <text x={cx} y={cy + 15} textAnchor="middle" className="dash-center-sub">{total ? "your busiest hour" : "no times yet"}</text>
+      </svg>
+    );
+  }
+
+  function dashArc(cx, cy, r, pct) {
+    const a0 = -Math.PI / 2, a1 = a0 + Math.min(0.9999, Math.max(0.004, pct)) * Math.PI * 2;
+    return "M " + (cx + Math.cos(a0) * r) + " " + (cy + Math.sin(a0) * r) +
+           " A " + r + " " + r + " 0 " + (pct > 0.5 ? 1 : 0) + " 1 " + (cx + Math.cos(a1) * r) + " " + (cy + Math.sin(a1) * r);
+  }
+
+  // Activity rings — each ring is a model; how far it travels is its share of replies.
+  function RingChart({ items, total }) {
+    return (
+      <div className="dash-rings">
+        <svg viewBox="0 0 140 140" width="132" height="132">
+          {items.map((it, i) => {
+            const r = 58 - i * 13;
+            return <g key={it.label}>
+              <circle cx="70" cy="70" r={r} fill="none" stroke="color-mix(in srgb, var(--text-3) 13%, transparent)" strokeWidth="9" />
+              <path d={dashArc(70, 70, r, total ? it.n / total : 0)} fill="none"
+                stroke={DASH_COLORS[i % DASH_COLORS.length]} strokeWidth="9" strokeLinecap="round" />
+            </g>;
+          })}
+        </svg>
+        <div className="dash-legend">
+          {items.map((it, i) => (
+            <div key={it.label} className="dash-leg-row">
+              <span className="dot" style={{ background: DASH_COLORS[i % DASH_COLORS.length] }} />
+              <span className="lab" title={it.label}>{it.label}</span>
+              <span className="val">{Math.round(total ? (it.n / total) * 100 : 0)}%</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // A flower — each petal is a kind of work the agent did; bigger petal = more often.
+  function PetalChart({ items }) {
+    const W = 260, cx = W / 2, cy = 118;
+    const max = Math.max(1, Math.max.apply(null, items.map((i) => i.n)));
+    const N = items.length;
+    return (
+      <svg viewBox={"0 0 " + W + " 236"} className="dash-svg">
+        {items.map((it, i) => {
+          const a = (i / N) * Math.PI * 2 - Math.PI / 2;
+          const len = 34 + (it.n / max) * 58, w = 13 + (it.n / max) * 9;
+          const tx = cx + Math.cos(a) * len, ty = cy + Math.sin(a) * len;
+          const mx = cx + Math.cos(a) * len * 0.55, my = cy + Math.sin(a) * len * 0.55;
+          const px = Math.cos(a + Math.PI / 2) * w, py = Math.sin(a + Math.PI / 2) * w;
+          const lx = cx + Math.cos(a) * (len + 14), ly = cy + Math.sin(a) * (len + 14);
+          return <g key={it.label}>
+            <path d={"M " + cx + " " + cy + " Q " + (mx + px) + " " + (my + py) + " " + tx + " " + ty +
+                     " Q " + (mx - px) + " " + (my - py) + " " + cx + " " + cy + " Z"}
+              fill={"color-mix(in srgb, " + DASH_COLORS[i % DASH_COLORS.length] + " " + Math.round(40 + (it.n / max) * 42) + "%, transparent)"} />
+            <text x={lx} y={ly + (Math.sin(a) > 0.5 ? 8 : Math.sin(a) < -0.5 ? -2 : 3)}
+              textAnchor={Math.cos(a) > 0.3 ? "start" : Math.cos(a) < -0.3 ? "end" : "middle"} className="dash-tick">{it.label} · {it.n}</text>
+          </g>;
+        })}
+        <circle cx={cx} cy={cy} r="12" fill="var(--surface)" stroke="var(--border)" />
+      </svg>
+    );
+  }
+
+  // Every dot is one reply, placed by how long it took.
+  function SpeedDots({ speeds }) {
+    const W = 300, H = 88, x0 = 10, x1 = W - 10;
+    const maxS = Math.max(5, Math.min(30, Math.ceil(Math.max.apply(null, speeds))));
+    const med = speeds.slice().sort((a, b) => a - b)[Math.floor(speeds.length / 2)] || 0;
+    const X = (s) => x0 + Math.min(1, s / maxS) * (x1 - x0);
+    return (
+      <svg viewBox={"0 0 " + W + " " + H} className="dash-svg">
+        <line x1={x0} y1={H - 22} x2={x1} y2={H - 22} stroke="var(--border)" />
+        {speeds.slice(-160).map((s, i) => (
+          <circle key={i} cx={X(s)} cy={16 + ((i * 53) % 34)} r="3.6" fill="color-mix(in srgb, var(--accent) 38%, transparent)" />
+        ))}
+        <line x1={X(med)} y1={8} x2={X(med)} y2={H - 22} stroke="var(--accent)" strokeWidth="2" strokeDasharray="3 3" />
+        <text x={Math.min(x1 - 26, Math.max(x0 + 26, X(med)))} y={H - 8} textAnchor="middle" className="dash-tick">typically {med}s</text>
+        <text x={x0} y={H - 8} className="dash-tick">fast</text>
+        <text x={x1} y={H - 8} textAnchor="end" className="dash-tick">{maxS}s+</text>
+      </svg>
+    );
+  }
+
+  // A calendar — each square is a day; deeper color, more messages.
+  function HeatStrip({ days }) {
+    const weeks = 10, cell = 15, gap = 3;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const start = new Date(today); start.setDate(start.getDate() - (weeks * 7 - 1) - today.getDay());
+    const list = []; let max = 1;
+    for (let i = 0; i < weeks * 7 + 7; i++) {
+      const d = new Date(start); d.setDate(start.getDate() + i);
+      if (d > today) break;
+      const n = days[d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate()] || 0;
+      if (n > max) max = n;
+      list.push({ d, n, col: Math.floor(i / 7), row: i % 7 });
+    }
+    const W = (weeks + 1) * (cell + gap) + 26, H = 7 * (cell + gap) + 4;
+    return (
+      <svg viewBox={"0 0 " + W + " " + H} className="dash-svg dash-heat">
+        {["M", "W", "F"].map((t, i) => <text key={t} x="2" y={(i * 2 + 1) * (cell + gap) + cell - 3} className="dash-tick">{t}</text>)}
+        {list.map((c, i) => (
+          <rect key={i} x={24 + c.col * (cell + gap)} y={c.row * (cell + gap)} width={cell} height={cell} rx="4"
+            fill={c.n ? "color-mix(in srgb, var(--accent) " + Math.round(22 + (c.n / max) * 66) + "%, transparent)"
+                      : "color-mix(in srgb, var(--text-3) 10%, transparent)"}>
+            <title>{c.d.toDateString() + " — " + c.n + " message" + (c.n === 1 ? "" : "s")}</title>
+          </rect>
+        ))}
+      </svg>
+    );
+  }
+
+  // Who does the talking — your words vs the agent's.
+  function Butterfly({ you, ai }) {
+    const W = 320, H = 62, mid = W / 2;
+    const max = Math.max(1, you, ai);
+    const wl = (you / max) * (mid - 16), wr = (ai / max) * (mid - 16);
+    return (
+      <svg viewBox={"0 0 " + W + " " + H} className="dash-svg">
+        <rect x={mid - 5 - wl} y="14" width={wl} height="16" rx="8" fill="color-mix(in srgb, var(--accent) 82%, transparent)" />
+        <rect x={mid + 5} y="14" width={wr} height="16" rx="8" fill="#7d9bd8" />
+        <line x1={mid} y1="6" x2={mid} y2="38" stroke="var(--border)" />
+        <text x={mid - 10} y="54" textAnchor="end" className="dash-tick">You · {dashNum(you)} words</text>
+        <text x={mid + 10} y="54" className="dash-tick">Agent · {dashNum(ai)} words</text>
+      </svg>
+    );
+  }
+
+  // Half-dial — how full the AI's working memory gets in a typical reply.
+  function GaugeArc({ pct }) {
+    const W = 220, cx = W / 2, cy = 102, r = 72;
+    const a = Math.PI + (Math.min(100, pct) / 100) * Math.PI;
+    const col = pct >= 85 ? "#d9534f" : pct >= 60 ? "#d8a14e" : "var(--accent)";
+    return (
+      <svg viewBox={"0 0 " + W + " 118"} className="dash-svg">
+        <path d={"M " + (cx - r) + " " + cy + " A " + r + " " + r + " 0 0 1 " + (cx + r) + " " + cy}
+          fill="none" stroke="color-mix(in srgb, var(--text-3) 15%, transparent)" strokeWidth="13" strokeLinecap="round" />
+        <path d={"M " + (cx - r) + " " + cy + " A " + r + " " + r + " 0 0 1 " + (cx + Math.cos(a) * r) + " " + (cy + Math.sin(a) * r)}
+          fill="none" stroke={col} strokeWidth="13" strokeLinecap="round" />
+        <text x={cx} y={cy - 16} textAnchor="middle" className="dash-center-big">{Math.round(pct)}%</text>
+        <text x={cx} y={cy + 2} textAnchor="middle" className="dash-center-sub">of memory in a typical reply</text>
+      </svg>
+    );
+  }
+
+  // One stacked pill — where the agent's chats come from.
+  function SourceBar({ items }) {
+    const total = items.reduce((a, b) => a + b.n, 0) || 1;
+    return (
+      <div>
+        <div className="dash-stack">
+          {items.map((it, i) => (
+            <span key={it.source} style={{ width: (it.n / total) * 100 + "%", background: DASH_COLORS[i % DASH_COLORS.length] }}
+              title={(DASH_SRC[it.source] || it.source) + " · " + it.n} />
+          ))}
+        </div>
+        <div className="dash-legend dash-legend-flow">
+          {items.map((it, i) => (
+            <span key={it.source} className="dash-leg-row">
+              <span className="dot" style={{ background: DASH_COLORS[i % DASH_COLORS.length] }} />
+              <span className="lab">{DASH_SRC[it.source] || it.source}</span>
+              <span className="val">{dashNum(it.n)}</span>
+            </span>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // Defined OUTSIDE Dashboard so re-renders don't remount them (a component created
+  // inside render gets a new identity each time → React remounts the subtree → the
+  // fade-up animation replays on every sessions sync = visible blinking).
+  function DashTile({ v, l }) {
+    return <div className="dash-tile anim-fadeup"><div className="v">{v}</div><div className="l">{l}</div></div>;
+  }
+  function DashCard({ t, d, children, full, note }) {
+    return (
+      <div className={"dash-card anim-fadeup" + (full ? " dash-full" : "")}>
+        <h4>{t}</h4><div className="d">{d}</div>
+        {note ? <div className="dash-note">{note}</div> : children}
+      </div>
+    );
+  }
+
+  function Dashboard({ sessions, onClose, onNewChat }) {
+    // freeze the data as-of-open: the 700ms/8s session syncs would otherwise
+    // recompute + repaint every chart for no visible benefit
+    const [snap] = React.useState(sessions);
+    const S = React.useMemo(() => dashCrunch(snap), [snap]);
+    const [agent, setAgent] = React.useState(null);
+    React.useEffect(() => {
+      fetch("/api/dashboard/agent").then((r) => r.json())
+        .then((d) => setAgent(d && d.sessions ? d : null)).catch(() => {});
+    }, []);
+
+    const models = Object.entries(S.models).sort((a, b) => b[1] - a[1]);
+    // display name: strip the "provider::" prefix old messages carry in their model id
+    const modelName = (id) => { const s = String(id); return (s.includes("::") ? s.split("::").pop() : s) || s; };
+    const ringItems = models.slice(0, 4).map(([label, n]) => ({ label: modelName(label), n }));
+    const moreModels = models.slice(4).reduce((a, [, n]) => a + n, 0);
+    if (moreModels) ringItems.push({ label: "others", n: moreModels });
+    const ringTotal = ringItems.reduce((a, b) => a + b.n, 0);   // % of model-tagged replies
+    const petalItems = Object.entries(S.byKind).sort((a, b) => b[1] - a[1]).slice(0, 6)
+      .map(([k, n]) => ({ label: DASH_KIND[k] || k, n }));
+    const avgCtx = S.ctx.length ? S.ctx.reduce((a, b) => a + b, 0) / S.ctx.length : 0;
+    const empty = S.you + S.ai === 0;
+    const Tile = DashTile, Card = DashCard;   // stable identities — no remount, no blink
+
+    return (
+      <div className="overlay" style={{ padding: 0, alignItems: "stretch" }}>
+        <div className="overlay-scrim" onClick={onClose} />
+        <div className="modal dash-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-head">
+            <h2><I.Chart size={18} style={{ verticalAlign: "-3px", marginRight: 8 }} />Dashboard</h2>
+            <button className="x-btn" onClick={onClose} aria-label="Close"><I.X size={18} /></button>
+          </div>
+          <div className="dash-body">
+            {empty ? (
+              <div className="dash-welcome">
+                <window.HermesGlyph size={46} />
+                <h3>Your dashboard grows as you chat</h3>
+                <p>Once you've had a few conversations, this page fills with charts: when you chat, which models do the work, what the agent did for you, and more.</p>
+                {onNewChat && <button className="btn btn-primary" onClick={() => { onClose(); onNewChat(); }}>Start a chat</button>}
+              </div>
+            ) : (
+              <React.Fragment>
+                <div className="dash-hero">
+                  <Tile v={dashNum(S.chats)} l="chats" />
+                  <Tile v={dashNum(S.you + S.ai)} l="messages" />
+                  <Tile v={dashNum(S.tools)} l="things the agent did" />
+                  <Tile v={dashNum(S.activeDays)} l={"active day" + (S.activeDays === 1 ? "" : "s")} />
+                  {S.plansTotal > 0 && <Tile v={S.plansDone + "/" + S.plansTotal} l="plan steps completed" />}
+                  {S.images > 0 && <Tile v={dashNum(S.images)} l="images shared" />}
+                </div>
+
+                <div className="dash-grid">
+                  <Card t="When you chat" d="A 24-hour clock — longer hands mean busier hours.">
+                    <ClockChart hours={S.hours} />
+                  </Card>
+                  <Card t="Models doing the work" d="Each ring is a model — how far it reaches around is its share of replies."
+                    note={ringItems.length ? null : "No replies yet."}>
+                    <RingChart items={ringItems} total={ringTotal} />
+                  </Card>
+                  <Card t="What the agent did for you" d="Each petal is a kind of work — a bigger petal means it happened more."
+                    note={petalItems.length ? null : "The agent hasn't used tools here yet — ask it to run a command or read a file."}>
+                    <PetalChart items={petalItems} />
+                  </Card>
+                  <Card t="How fast replies arrive" d="Every dot is one reply — the dotted line marks a typical wait."
+                    note={S.speeds.length ? null : "Reply timings appear after your next few chats."}>
+                    <SpeedDots speeds={S.speeds} />
+                  </Card>
+                  <Card t="The conversation balance" d="Who does the talking — you, or the agent.">
+                    <Butterfly you={S.wordsYou} ai={S.wordsAi} />
+                  </Card>
+                  <Card t="Memory in use" d="How much of the AI's working memory a typical reply needs."
+                    note={S.ctx.length ? null : "Appears once the agent reports its memory use (chat through your local agent)."}>
+                    <GaugeArc pct={avgCtx} />
+                  </Card>
+                </div>
+
+                <Card full t="Your last 10 weeks" d="Each square is a day — the deeper the color, the more you chatted.">
+                  <HeatStrip days={S.days} />
+                </Card>
+
+                <Card full t="Your biggest chats" d="The conversations with the most back-and-forth.">
+                  <div className="dash-rows">
+                    {S.top.map((c, i) => (
+                      <div key={i} className="dash-row">
+                        <span className="ttl" title={c.title}>{c.title}</span>
+                        <span className="bar"><span style={{ width: (c.n / Math.max(1, S.top[0].n)) * 100 + "%" }} /></span>
+                        <span className="cnt">{c.n}</span>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+
+                {agent && (
+                  <React.Fragment>
+                    <div className="dash-sec">
+                      <I.Bot size={15} /> Your agent — lifetime, across everything it does
+                      <span className="dash-sec-sub">terminal, editors, schedules, messengers — not just AgentBay</span>
+                    </div>
+                    <div className="dash-hero">
+                      <Tile v={dashNum(agent.sessions)} l="agent sessions" />
+                      <Tile v={dashNum(agent.messages)} l="messages handled" />
+                      <Tile v={dashNum(agent.tool_calls)} l="tools run" />
+                      <Tile v={dashNum(agent.tokens_in + agent.tokens_out)} l="tokens processed" />
+                      {agent.est_cost_usd > 0 && <Tile v={"$" + agent.est_cost_usd} l="estimated spend" />}
+                    </div>
+                    <Card full t="Where the agent's chats come from" d="One bar, split by surface — hover a segment for details.">
+                      <SourceBar items={agent.by_source || []} />
+                    </Card>
+                  </React.Fragment>
+                )}
+              </React.Fragment>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  window.Views = { Login, ModelMenu, Notes, Tour, OnboardingGate, Dashboard };
 })();
 
 
@@ -3520,6 +3970,7 @@ Object.assign(window, {
     collapseDefault: false, bubbles: true, timestamps: false, autoScroll: true, followups: false,
     agentsEnabled: false, accent: "#d9a36b", systemPrompt: "", stt: "Whisper (local)", tts: "Browser (system)",
     showThinking: true, showTools: true, fallbackModel: "",
+    dashboard: false, scheduledTasks: false, showUsage: false,
   };
   function buildUser(name) {
     const nm = (name || "").trim();
@@ -3836,7 +4287,7 @@ Object.assign(window, {
       };
       // push empty assistant msg
       setSessions((ss) => ss.map((s) => s.id === sessionId ? {
-        ...s, messages: [...s.messages, { role: "assistant", content: "", model, ts: new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }), followups, thought: 0 }],
+        ...s, messages: [...s.messages, { role: "assistant", content: "", model, t: Date.now(), ts: new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }), followups, thought: 0 }],
       } : s));
 
       setStreaming({ sessionId, text: "", phase: "think" });
@@ -3936,7 +4387,7 @@ Object.assign(window, {
         if (s.id !== sessionId) return s;
         const msgs = s.messages.slice();
         const last = msgs[msgs.length - 1];
-        if (last && last.role === "assistant") msgs[msgs.length - 1] = { ...last, content: full, thought: Math.min(secs, 9), followups, reasoning: meta.reasoning || "", tools: meta.tools || [], plan: meta.plan || [], usage: meta.usage || null };
+        if (last && last.role === "assistant") msgs[msgs.length - 1] = { ...last, content: full, thought: Math.min(secs, 9), took: secs, followups, reasoning: meta.reasoning || "", tools: meta.tools || [], plan: meta.plan || [], usage: meta.usage || null };
         return { ...s, messages: msgs, updated: Date.now() };
       }));
       setStreaming(null);
@@ -3997,7 +4448,7 @@ Object.assign(window, {
       const named = attachments.filter((a) => !a.text && a.kind !== "image").map((a) => a.name);
       const body = typed + textParts.join("") + (named.length ? "\n\n[Attached (by name only): " + named.join(", ") + "]" : "");
       const title = (typed || (attachments[0] && attachments[0].name) || "New chat").slice(0, 40);
-      const userMsg = { role: "user", content: body };
+      const userMsg = { role: "user", content: body, t: Date.now() };
       if (images.length) userMsg.images = images;
 
       let sid = activeId;
@@ -4177,6 +4628,7 @@ Object.assign(window, {
           folders={folders} groupOrder={D.GROUP_ORDER} user={user} theme={theme}
           onNewChat={newChat} onOpenChat={openChat} onOpenSearch={() => setModal({ kind: "search" })}
           onOpenNotes={() => setModal({ kind: "notes" })}
+          onOpenDashboard={() => setModal({ kind: "dashboard" })} showDashboard={settings.dashboard === true}
           onOpenProjects={() => setModal({ kind: "projects" })} onOpenAgents={() => setModal({ kind: "agents" })}
           onOpenSkills={() => setModal({ kind: "skills" })} showSkills={skillsCount > 0}
           showAgents={settings.agentsEnabled}
@@ -4283,6 +4735,7 @@ Object.assign(window, {
           onImport={(arr) => { setSessions((ss) => [...arr, ...ss]); }} />}
         {modal && modal.kind === "changelog" && <Mo.ChangelogModal onSeen={setChangelogSeen} onClose={() => { setModal(null); if (!tour) { setShowTour(true); setTour(true); } }} />}
         {modal && modal.kind === "notes" && <V.Notes onClose={() => setModal(null)} />}
+        {modal && modal.kind === "dashboard" && <V.Dashboard sessions={sessions} onClose={() => setModal(null)} onNewChat={newChat} />}
         {modal && modal.kind === "projects" && <Hub.Projects projects={projects} setProjects={setProjects} onClose={() => setModal(null)} onToast={toast} onStartChat={startProjectChat} />}
         {modal && modal.kind === "agents" && <Hub.Agents agents={agents} setAgents={setAgents} models={D.MODELS} onClose={() => setModal(null)} onToast={toast} onStartChat={startAgentChat} />}
         {modal && modal.kind === "skills" && <Hub.Skills onClose={() => setModal(null)} />}

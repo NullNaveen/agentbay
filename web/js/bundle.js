@@ -149,6 +149,7 @@
       height: 12,
       rx: 2
     }), "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"]),
+    Chart: S(["M3 3v18h18", "m7 14 4-4 3 3 5-6"]),
     Check: S(["M20 6 9 17l-5-5"]),
     CheckCircle: S(["M22 11.08V12a10 10 0 1 1-5.93-9.14", "m22 4-10 10.01-3-3"]),
     X: S(["M18 6 6 18", "M6 6l12 12"]),
@@ -1091,6 +1092,8 @@
       showAgents,
       onOpenSkills,
       showSkills,
+      onOpenDashboard,
+      showDashboard,
       onNewFolder,
       onChatMenu,
       onToggleCollapse,
@@ -1166,7 +1169,16 @@
         fontSize: 11,
         color: "var(--text-faint)"
       }
-    }, "\u2318K")), /*#__PURE__*/React.createElement("button", {
+    }, "\u2318K")), showDashboard && /*#__PURE__*/React.createElement("button", {
+      className: "sb-item",
+      onClick: onOpenDashboard
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "ic"
+    }, /*#__PURE__*/React.createElement(I.Chart, {
+      size: 18
+    })), /*#__PURE__*/React.createElement("span", {
+      className: "sb-label"
+    }, "Dashboard")), /*#__PURE__*/React.createElement("button", {
       className: "sb-item",
       onClick: onOpenNotes
     }, /*#__PURE__*/React.createElement("span", {
@@ -1431,6 +1443,7 @@
     showTimestamps,
     showThinking,
     showTools,
+    showUsage,
     onRegen,
     onRetry,
     avatars,
@@ -1615,7 +1628,7 @@
         title: meta.name,
         desc: "Generated in " + (msg.thought || 3) + "s · ~" + Math.max(1, Math.round(msg.content.length / 4)) + " tokens"
       })
-    }), !streaming && msg.usage && msg.usage.size > 0 ? (() => {
+    }), showUsage && !streaming && msg.usage && msg.usage.size > 0 ? (() => {
       const fmtTok = n => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k" : String(n);
       const pct = Math.min(100, Math.round(msg.usage.used / msg.usage.size * 100));
       return /*#__PURE__*/React.createElement("div", {
@@ -1798,6 +1811,7 @@
         showTimestamps: settings.timestamps,
         showThinking: settings.showThinking,
         showTools: settings.showTools,
+        showUsage: settings.showUsage === true,
         onRegen: onRegen,
         avatars: settings.avatars,
         latex: settings.latex,
@@ -3070,8 +3084,147 @@
       }
     }, JSON.stringify(d, null, 2)));
   }
-  function AgentPanel({
+
+  // ---- Scheduled tasks: the agent's cron jobs (runs prompts on a timer) ----
+  function CronCard({
     onToast
+  }) {
+    const [data, setData] = React.useState(null); // {available, jobs}
+    const [form, setForm] = React.useState({
+      name: "",
+      schedule: "",
+      prompt: ""
+    });
+    const [busy, setBusy] = React.useState(false);
+    const load = () => fetch("/api/agent/cron").then(r => r.json()).then(setData).catch(() => {});
+    React.useEffect(() => {
+      load();
+    }, []);
+    if (!data) return null;
+    if (!data.available) return /*#__PURE__*/React.createElement("p", {
+      style: {
+        fontSize: 12.5,
+        color: "var(--text-3)",
+        marginTop: 8
+      }
+    }, "Scheduled tasks need a local Hermes agent.");
+    const post = (body, okMsg) => {
+      setBusy(true);
+      fetch("/api/agent/cron", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(body)
+      }).then(r => r.json()).then(d => {
+        setData(s => ({
+          ...s,
+          jobs: d.jobs || []
+        }));
+        onToast && onToast(d.ok ? {
+          type: "success",
+          title: okMsg
+        } : {
+          type: "error",
+          title: d.message || "Failed"
+        });
+        if (d.ok && body.action === "create") setForm({
+          name: "",
+          schedule: "",
+          prompt: ""
+        });
+      }).catch(() => onToast && onToast({
+        type: "error",
+        title: "Network error"
+      })).then(() => setBusy(false));
+    };
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginTop: 10
+      }
+    }, (data.jobs || []).length === 0 && /*#__PURE__*/React.createElement("p", {
+      style: {
+        fontSize: 12.5,
+        color: "var(--text-3)",
+        margin: "4px 0 10px"
+      }
+    }, "No scheduled tasks yet \u2014 create your first one below."), (data.jobs || []).map(j => /*#__PURE__*/React.createElement("div", {
+      key: j.id,
+      className: "cron-row"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "cron-dot" + (j.enabled ? " on" : ""),
+      title: j.enabled ? "running on schedule" : "paused"
+    }), /*#__PURE__*/React.createElement("span", {
+      className: "cron-name",
+      title: j.prompt || j.script
+    }, j.name || j.id), /*#__PURE__*/React.createElement("code", {
+      className: "cron-sched"
+    }, j.schedule), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost",
+      disabled: busy,
+      style: {
+        padding: "3px 9px",
+        fontSize: 12
+      },
+      onClick: () => post({
+        action: "toggle",
+        id: j.id
+      }, j.enabled ? "Paused " + j.name : "Resumed " + j.name)
+    }, j.enabled ? "Pause" : "Resume"), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-ghost",
+      disabled: busy,
+      "aria-label": "Delete",
+      style: {
+        padding: "3px 7px"
+      },
+      onClick: () => post({
+        action: "delete",
+        id: j.id
+      }, "Deleted " + j.name)
+    }, /*#__PURE__*/React.createElement(I.Trash, {
+      size: 14
+    })))), /*#__PURE__*/React.createElement("div", {
+      className: "cron-new"
+    }, /*#__PURE__*/React.createElement("input", {
+      className: "field",
+      placeholder: "Name \u2014 e.g. Morning briefing",
+      value: form.name,
+      onChange: e => setForm({
+        ...form,
+        name: e.target.value
+      })
+    }), /*#__PURE__*/React.createElement("input", {
+      className: "field",
+      placeholder: "When \u2014 e.g. every 30m \xB7 daily 09:00",
+      value: form.schedule,
+      onChange: e => setForm({
+        ...form,
+        schedule: e.target.value
+      })
+    }), /*#__PURE__*/React.createElement("textarea", {
+      className: "field",
+      placeholder: "What should the agent do? e.g. Summarize my unread Telegram messages.",
+      value: form.prompt,
+      style: {
+        minHeight: 54
+      },
+      onChange: e => setForm({
+        ...form,
+        prompt: e.target.value
+      })
+    }), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-primary",
+      disabled: busy || !(form.name.trim() && form.schedule.trim() && form.prompt.trim()),
+      onClick: () => post({
+        action: "create",
+        job: form
+      }, "Task scheduled")
+    }, "Schedule task")));
+  }
+  function AgentPanel({
+    onToast,
+    s,
+    set
   }) {
     const [agents, setAgents] = React.useState(null);
     const [upd, setUpd] = React.useState({}); // {agent:{update_available,current,latest}}
@@ -3194,7 +3347,38 @@
       onToast: onToast
     }), /*#__PURE__*/React.createElement(ReasoningEffortCard, {
       onToast: onToast
-    }), /*#__PURE__*/React.createElement(BrowserUseCard, {
+    }), s && set && /*#__PURE__*/React.createElement("div", {
+      style: {
+        border: "1px solid var(--border)",
+        borderRadius: 12,
+        padding: 14,
+        marginTop: 12
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 10
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "sec-title"
+    }, "Scheduled tasks"), /*#__PURE__*/React.createElement("p", {
+      style: {
+        fontSize: 12.5,
+        color: "var(--text-3)",
+        margin: "4px 0 0"
+      }
+    }, "Have the agent run prompts on a timer \u2014 daily briefings, recurring checks. Shares the agent's own schedule, so jobs run even when AgentBay is closed.")), /*#__PURE__*/React.createElement(Switch, {
+      on: s.scheduledTasks === true,
+      onChange: v => set("scheduledTasks", v),
+      label: "Scheduled tasks"
+    })), s.scheduledTasks === true && /*#__PURE__*/React.createElement(CronCard, {
+      onToast: onToast
+    })), /*#__PURE__*/React.createElement(BrowserUseCard, {
       onToast: onToast
     }));
   }
@@ -4522,6 +4706,13 @@
       on: s.agentsEnabled,
       onChange: v => set("agentsEnabled", v),
       label: "Agents"
+    })), /*#__PURE__*/React.createElement(Row, {
+      t: "Dashboard",
+      d: "A visual overview of your chats and agent activity, in the sidebar. Off by default."
+    }, /*#__PURE__*/React.createElement(Switch, {
+      on: s.dashboard === true,
+      onChange: v => set("dashboard", v),
+      label: "Dashboard"
     })), /*#__PURE__*/React.createElement("div", {
       className: "set-section",
       style: {
@@ -4543,6 +4734,13 @@
       on: s.showTools,
       onChange: v => set("showTools", v),
       label: "Show tools"
+    })), /*#__PURE__*/React.createElement(Row, {
+      t: "Context meter",
+      d: "A small badge under each reply showing how much of the AI's memory window is in use (e.g. 15k / 1000k). Off by default."
+    }, /*#__PURE__*/React.createElement(Switch, {
+      on: s.showUsage === true,
+      onChange: v => set("showUsage", v),
+      label: "Context meter"
     }))), /*#__PURE__*/React.createElement("div", {
       className: "set-section",
       style: {
@@ -4620,7 +4818,9 @@
     }), tab === "integrations" && /*#__PURE__*/React.createElement(IntegrationsPanel, {
       onToast: onToast
     }), tab === "agent" && /*#__PURE__*/React.createElement(AgentPanel, {
-      onToast: onToast
+      onToast: onToast,
+      s: s,
+      set: set
     }), tab === "remote" && /*#__PURE__*/React.createElement(RemotePanel, {
       onToast: onToast
     }), tab === "data" && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h3", {
@@ -6267,12 +6467,702 @@
       title: "AgentBay will work as a plain chatbot until you install an agent"
     }, "Skip \u2014 use as a chatbot"))));
   }
+
+  /* ---------- Dashboard: your chats & agent at a glance ----------
+     Every chart is hand-rolled SVG (no chart library, works offline) and chosen
+     to be readable by a non-technical person: a 24-hour clock, activity rings,
+     a flower of tool petals, a dot lane of reply speeds, a calendar of days. */
+  const DASH_COLORS = ["var(--accent)", "#7d9bd8", "#67b894", "#c98ab1", "#d8b25e", "#8893a8"];
+  const DASH_KIND = {
+    execute: "Ran commands",
+    read: "Read files",
+    edit: "Edited files",
+    search: "Searched",
+    fetch: "Browsed the web",
+    think: "Thought it through",
+    delete: "Cleaned up",
+    move: "Moved files",
+    other: "Other tools"
+  };
+  const DASH_SRC = {
+    cli: "Terminal",
+    acp: "AgentBay & editors",
+    cron: "Scheduled jobs",
+    telegram: "Telegram",
+    api_server: "API",
+    discord: "Discord",
+    slack: "Slack",
+    whatsapp: "WhatsApp",
+    other: "Other"
+  };
+  function dashNum(n) {
+    n = n || 0;
+    if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M";
+    if (n >= 1e3) return (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + "k";
+    return String(n);
+  }
+  function dashCrunch(sessions) {
+    const o = {
+      chats: 0,
+      you: 0,
+      ai: 0,
+      wordsYou: 0,
+      wordsAi: 0,
+      images: 0,
+      tools: 0,
+      byKind: {},
+      models: {},
+      hours: new Array(24).fill(0),
+      days: {},
+      speeds: [],
+      ctx: [],
+      plansDone: 0,
+      plansTotal: 0,
+      top: []
+    };
+    (sessions || []).forEach(s => {
+      const msgs = (s.messages || []).filter(m => m && (m.role === "user" || m.role === "assistant"));
+      if (!msgs.length) return;
+      o.chats++;
+      o.top.push({
+        title: s.title || "Untitled",
+        n: msgs.length
+      });
+      msgs.forEach(m => {
+        const d = new Date(m.t || s.updated || Date.now());
+        const key = d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate();
+        o.days[key] = (o.days[key] || 0) + 1;
+        // hour of day: new messages carry a real timestamp; older ones have a "2:14 PM" label
+        let hr = m.t ? d.getHours() : null;
+        if (hr == null && typeof m.ts === "string") {
+          const mt = m.ts.match(/(\d+):\d+\s*(AM|PM)?/i);
+          if (mt) {
+            hr = parseInt(mt[1], 10) % 12;
+            if (/pm/i.test(mt[2] || "")) hr += 12;
+          }
+        }
+        if (hr != null && hr >= 0 && hr < 24) o.hours[hr]++;
+        const words = String(m.content || "").trim().split(/\s+/).filter(Boolean).length;
+        if (m.role === "user") {
+          o.you++;
+          o.wordsYou += words;
+          if (m.images && m.images.length) o.images += m.images.length;
+        } else {
+          o.ai++;
+          o.wordsAi += words;
+          if (m.model) o.models[m.model] = (o.models[m.model] || 0) + 1;
+          const secs = m.took || m.thought;
+          if (secs) o.speeds.push(Math.min(60, secs));
+          if (m.usage && m.usage.size > 0) o.ctx.push(Math.min(100, m.usage.used / m.usage.size * 100));
+          (m.tools || []).forEach(t => {
+            o.tools++;
+            const k = t && t.kind || "other";
+            o.byKind[k] = (o.byKind[k] || 0) + 1;
+          });
+          if (m.plan && m.plan.length) {
+            o.plansTotal += m.plan.length;
+            o.plansDone += m.plan.filter(p => p.status === "completed").length;
+          }
+        }
+      });
+    });
+    o.activeDays = Object.keys(o.days).length;
+    o.top.sort((a, b) => b.n - a.n);
+    o.top = o.top.slice(0, 5);
+    return o;
+  }
+
+  // A 24-hour clock — each hand is an hour, longer = busier.
+  function ClockChart({
+    hours
+  }) {
+    const W = 260,
+      cx = W / 2,
+      cy = 126,
+      r0 = 42,
+      rMax = 64;
+    const max = Math.max(1, Math.max.apply(null, hours));
+    const total = hours.reduce((a, b) => a + b, 0);
+    const peak = hours.indexOf(Math.max.apply(null, hours));
+    const fmt = h => h === 0 ? "12 AM" : h < 12 ? h + " AM" : h === 12 ? "12 PM" : h - 12 + " PM";
+    return /*#__PURE__*/React.createElement("svg", {
+      viewBox: "0 0 " + W + " 252",
+      className: "dash-svg",
+      role: "img",
+      "aria-label": "Activity by hour"
+    }, hours.map((n, h) => {
+      const a = h / 24 * Math.PI * 2 - Math.PI / 2;
+      const len = n ? 8 + n / max * (rMax - 8) : 3;
+      return /*#__PURE__*/React.createElement("line", {
+        key: h,
+        x1: cx + Math.cos(a) * r0,
+        y1: cy + Math.sin(a) * r0,
+        x2: cx + Math.cos(a) * (r0 + len),
+        y2: cy + Math.sin(a) * (r0 + len),
+        stroke: n && h === peak ? "var(--accent)" : "color-mix(in srgb, var(--accent) " + (n ? Math.round(26 + n / max * 50) : 13) + "%, transparent)",
+        strokeWidth: "6",
+        strokeLinecap: "round"
+      });
+    }), [["12 AM", 0], ["6 AM", 6], ["12 PM", 12], ["6 PM", 18]].map(([t, h]) => {
+      const a = h / 24 * Math.PI * 2 - Math.PI / 2,
+        rr = r0 + rMax + 15;
+      return /*#__PURE__*/React.createElement("text", {
+        key: t,
+        x: cx + Math.cos(a) * rr,
+        y: cy + Math.sin(a) * rr + 3.5,
+        textAnchor: "middle",
+        className: "dash-tick"
+      }, t);
+    }), /*#__PURE__*/React.createElement("text", {
+      x: cx,
+      y: cy - 3,
+      textAnchor: "middle",
+      className: "dash-center-big"
+    }, total ? fmt(peak) : "—"), /*#__PURE__*/React.createElement("text", {
+      x: cx,
+      y: cy + 15,
+      textAnchor: "middle",
+      className: "dash-center-sub"
+    }, total ? "your busiest hour" : "no times yet"));
+  }
+  function dashArc(cx, cy, r, pct) {
+    const a0 = -Math.PI / 2,
+      a1 = a0 + Math.min(0.9999, Math.max(0.004, pct)) * Math.PI * 2;
+    return "M " + (cx + Math.cos(a0) * r) + " " + (cy + Math.sin(a0) * r) + " A " + r + " " + r + " 0 " + (pct > 0.5 ? 1 : 0) + " 1 " + (cx + Math.cos(a1) * r) + " " + (cy + Math.sin(a1) * r);
+  }
+
+  // Activity rings — each ring is a model; how far it travels is its share of replies.
+  function RingChart({
+    items,
+    total
+  }) {
+    return /*#__PURE__*/React.createElement("div", {
+      className: "dash-rings"
+    }, /*#__PURE__*/React.createElement("svg", {
+      viewBox: "0 0 140 140",
+      width: "132",
+      height: "132"
+    }, items.map((it, i) => {
+      const r = 58 - i * 13;
+      return /*#__PURE__*/React.createElement("g", {
+        key: it.label
+      }, /*#__PURE__*/React.createElement("circle", {
+        cx: "70",
+        cy: "70",
+        r: r,
+        fill: "none",
+        stroke: "color-mix(in srgb, var(--text-3) 13%, transparent)",
+        strokeWidth: "9"
+      }), /*#__PURE__*/React.createElement("path", {
+        d: dashArc(70, 70, r, total ? it.n / total : 0),
+        fill: "none",
+        stroke: DASH_COLORS[i % DASH_COLORS.length],
+        strokeWidth: "9",
+        strokeLinecap: "round"
+      }));
+    })), /*#__PURE__*/React.createElement("div", {
+      className: "dash-legend"
+    }, items.map((it, i) => /*#__PURE__*/React.createElement("div", {
+      key: it.label,
+      className: "dash-leg-row"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "dot",
+      style: {
+        background: DASH_COLORS[i % DASH_COLORS.length]
+      }
+    }), /*#__PURE__*/React.createElement("span", {
+      className: "lab",
+      title: it.label
+    }, it.label), /*#__PURE__*/React.createElement("span", {
+      className: "val"
+    }, Math.round(total ? it.n / total * 100 : 0), "%")))));
+  }
+
+  // A flower — each petal is a kind of work the agent did; bigger petal = more often.
+  function PetalChart({
+    items
+  }) {
+    const W = 260,
+      cx = W / 2,
+      cy = 118;
+    const max = Math.max(1, Math.max.apply(null, items.map(i => i.n)));
+    const N = items.length;
+    return /*#__PURE__*/React.createElement("svg", {
+      viewBox: "0 0 " + W + " 236",
+      className: "dash-svg"
+    }, items.map((it, i) => {
+      const a = i / N * Math.PI * 2 - Math.PI / 2;
+      const len = 34 + it.n / max * 58,
+        w = 13 + it.n / max * 9;
+      const tx = cx + Math.cos(a) * len,
+        ty = cy + Math.sin(a) * len;
+      const mx = cx + Math.cos(a) * len * 0.55,
+        my = cy + Math.sin(a) * len * 0.55;
+      const px = Math.cos(a + Math.PI / 2) * w,
+        py = Math.sin(a + Math.PI / 2) * w;
+      const lx = cx + Math.cos(a) * (len + 14),
+        ly = cy + Math.sin(a) * (len + 14);
+      return /*#__PURE__*/React.createElement("g", {
+        key: it.label
+      }, /*#__PURE__*/React.createElement("path", {
+        d: "M " + cx + " " + cy + " Q " + (mx + px) + " " + (my + py) + " " + tx + " " + ty + " Q " + (mx - px) + " " + (my - py) + " " + cx + " " + cy + " Z",
+        fill: "color-mix(in srgb, " + DASH_COLORS[i % DASH_COLORS.length] + " " + Math.round(40 + it.n / max * 42) + "%, transparent)"
+      }), /*#__PURE__*/React.createElement("text", {
+        x: lx,
+        y: ly + (Math.sin(a) > 0.5 ? 8 : Math.sin(a) < -0.5 ? -2 : 3),
+        textAnchor: Math.cos(a) > 0.3 ? "start" : Math.cos(a) < -0.3 ? "end" : "middle",
+        className: "dash-tick"
+      }, it.label, " \xB7 ", it.n));
+    }), /*#__PURE__*/React.createElement("circle", {
+      cx: cx,
+      cy: cy,
+      r: "12",
+      fill: "var(--surface)",
+      stroke: "var(--border)"
+    }));
+  }
+
+  // Every dot is one reply, placed by how long it took.
+  function SpeedDots({
+    speeds
+  }) {
+    const W = 300,
+      H = 88,
+      x0 = 10,
+      x1 = W - 10;
+    const maxS = Math.max(5, Math.min(30, Math.ceil(Math.max.apply(null, speeds))));
+    const med = speeds.slice().sort((a, b) => a - b)[Math.floor(speeds.length / 2)] || 0;
+    const X = s => x0 + Math.min(1, s / maxS) * (x1 - x0);
+    return /*#__PURE__*/React.createElement("svg", {
+      viewBox: "0 0 " + W + " " + H,
+      className: "dash-svg"
+    }, /*#__PURE__*/React.createElement("line", {
+      x1: x0,
+      y1: H - 22,
+      x2: x1,
+      y2: H - 22,
+      stroke: "var(--border)"
+    }), speeds.slice(-160).map((s, i) => /*#__PURE__*/React.createElement("circle", {
+      key: i,
+      cx: X(s),
+      cy: 16 + i * 53 % 34,
+      r: "3.6",
+      fill: "color-mix(in srgb, var(--accent) 38%, transparent)"
+    })), /*#__PURE__*/React.createElement("line", {
+      x1: X(med),
+      y1: 8,
+      x2: X(med),
+      y2: H - 22,
+      stroke: "var(--accent)",
+      strokeWidth: "2",
+      strokeDasharray: "3 3"
+    }), /*#__PURE__*/React.createElement("text", {
+      x: Math.min(x1 - 26, Math.max(x0 + 26, X(med))),
+      y: H - 8,
+      textAnchor: "middle",
+      className: "dash-tick"
+    }, "typically ", med, "s"), /*#__PURE__*/React.createElement("text", {
+      x: x0,
+      y: H - 8,
+      className: "dash-tick"
+    }, "fast"), /*#__PURE__*/React.createElement("text", {
+      x: x1,
+      y: H - 8,
+      textAnchor: "end",
+      className: "dash-tick"
+    }, maxS, "s+"));
+  }
+
+  // A calendar — each square is a day; deeper color, more messages.
+  function HeatStrip({
+    days
+  }) {
+    const weeks = 10,
+      cell = 15,
+      gap = 3;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const start = new Date(today);
+    start.setDate(start.getDate() - (weeks * 7 - 1) - today.getDay());
+    const list = [];
+    let max = 1;
+    for (let i = 0; i < weeks * 7 + 7; i++) {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      if (d > today) break;
+      const n = days[d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate()] || 0;
+      if (n > max) max = n;
+      list.push({
+        d,
+        n,
+        col: Math.floor(i / 7),
+        row: i % 7
+      });
+    }
+    const W = (weeks + 1) * (cell + gap) + 26,
+      H = 7 * (cell + gap) + 4;
+    return /*#__PURE__*/React.createElement("svg", {
+      viewBox: "0 0 " + W + " " + H,
+      className: "dash-svg dash-heat"
+    }, ["M", "W", "F"].map((t, i) => /*#__PURE__*/React.createElement("text", {
+      key: t,
+      x: "2",
+      y: (i * 2 + 1) * (cell + gap) + cell - 3,
+      className: "dash-tick"
+    }, t)), list.map((c, i) => /*#__PURE__*/React.createElement("rect", {
+      key: i,
+      x: 24 + c.col * (cell + gap),
+      y: c.row * (cell + gap),
+      width: cell,
+      height: cell,
+      rx: "4",
+      fill: c.n ? "color-mix(in srgb, var(--accent) " + Math.round(22 + c.n / max * 66) + "%, transparent)" : "color-mix(in srgb, var(--text-3) 10%, transparent)"
+    }, /*#__PURE__*/React.createElement("title", null, c.d.toDateString() + " — " + c.n + " message" + (c.n === 1 ? "" : "s")))));
+  }
+
+  // Who does the talking — your words vs the agent's.
+  function Butterfly({
+    you,
+    ai
+  }) {
+    const W = 320,
+      H = 62,
+      mid = W / 2;
+    const max = Math.max(1, you, ai);
+    const wl = you / max * (mid - 16),
+      wr = ai / max * (mid - 16);
+    return /*#__PURE__*/React.createElement("svg", {
+      viewBox: "0 0 " + W + " " + H,
+      className: "dash-svg"
+    }, /*#__PURE__*/React.createElement("rect", {
+      x: mid - 5 - wl,
+      y: "14",
+      width: wl,
+      height: "16",
+      rx: "8",
+      fill: "color-mix(in srgb, var(--accent) 82%, transparent)"
+    }), /*#__PURE__*/React.createElement("rect", {
+      x: mid + 5,
+      y: "14",
+      width: wr,
+      height: "16",
+      rx: "8",
+      fill: "#7d9bd8"
+    }), /*#__PURE__*/React.createElement("line", {
+      x1: mid,
+      y1: "6",
+      x2: mid,
+      y2: "38",
+      stroke: "var(--border)"
+    }), /*#__PURE__*/React.createElement("text", {
+      x: mid - 10,
+      y: "54",
+      textAnchor: "end",
+      className: "dash-tick"
+    }, "You \xB7 ", dashNum(you), " words"), /*#__PURE__*/React.createElement("text", {
+      x: mid + 10,
+      y: "54",
+      className: "dash-tick"
+    }, "Agent \xB7 ", dashNum(ai), " words"));
+  }
+
+  // Half-dial — how full the AI's working memory gets in a typical reply.
+  function GaugeArc({
+    pct
+  }) {
+    const W = 220,
+      cx = W / 2,
+      cy = 102,
+      r = 72;
+    const a = Math.PI + Math.min(100, pct) / 100 * Math.PI;
+    const col = pct >= 85 ? "#d9534f" : pct >= 60 ? "#d8a14e" : "var(--accent)";
+    return /*#__PURE__*/React.createElement("svg", {
+      viewBox: "0 0 " + W + " 118",
+      className: "dash-svg"
+    }, /*#__PURE__*/React.createElement("path", {
+      d: "M " + (cx - r) + " " + cy + " A " + r + " " + r + " 0 0 1 " + (cx + r) + " " + cy,
+      fill: "none",
+      stroke: "color-mix(in srgb, var(--text-3) 15%, transparent)",
+      strokeWidth: "13",
+      strokeLinecap: "round"
+    }), /*#__PURE__*/React.createElement("path", {
+      d: "M " + (cx - r) + " " + cy + " A " + r + " " + r + " 0 0 1 " + (cx + Math.cos(a) * r) + " " + (cy + Math.sin(a) * r),
+      fill: "none",
+      stroke: col,
+      strokeWidth: "13",
+      strokeLinecap: "round"
+    }), /*#__PURE__*/React.createElement("text", {
+      x: cx,
+      y: cy - 16,
+      textAnchor: "middle",
+      className: "dash-center-big"
+    }, Math.round(pct), "%"), /*#__PURE__*/React.createElement("text", {
+      x: cx,
+      y: cy + 2,
+      textAnchor: "middle",
+      className: "dash-center-sub"
+    }, "of memory in a typical reply"));
+  }
+
+  // One stacked pill — where the agent's chats come from.
+  function SourceBar({
+    items
+  }) {
+    const total = items.reduce((a, b) => a + b.n, 0) || 1;
+    return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+      className: "dash-stack"
+    }, items.map((it, i) => /*#__PURE__*/React.createElement("span", {
+      key: it.source,
+      style: {
+        width: it.n / total * 100 + "%",
+        background: DASH_COLORS[i % DASH_COLORS.length]
+      },
+      title: (DASH_SRC[it.source] || it.source) + " · " + it.n
+    }))), /*#__PURE__*/React.createElement("div", {
+      className: "dash-legend dash-legend-flow"
+    }, items.map((it, i) => /*#__PURE__*/React.createElement("span", {
+      key: it.source,
+      className: "dash-leg-row"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "dot",
+      style: {
+        background: DASH_COLORS[i % DASH_COLORS.length]
+      }
+    }), /*#__PURE__*/React.createElement("span", {
+      className: "lab"
+    }, DASH_SRC[it.source] || it.source), /*#__PURE__*/React.createElement("span", {
+      className: "val"
+    }, dashNum(it.n))))));
+  }
+
+  // Defined OUTSIDE Dashboard so re-renders don't remount them (a component created
+  // inside render gets a new identity each time → React remounts the subtree → the
+  // fade-up animation replays on every sessions sync = visible blinking).
+  function DashTile({
+    v,
+    l
+  }) {
+    return /*#__PURE__*/React.createElement("div", {
+      className: "dash-tile anim-fadeup"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "v"
+    }, v), /*#__PURE__*/React.createElement("div", {
+      className: "l"
+    }, l));
+  }
+  function DashCard({
+    t,
+    d,
+    children,
+    full,
+    note
+  }) {
+    return /*#__PURE__*/React.createElement("div", {
+      className: "dash-card anim-fadeup" + (full ? " dash-full" : "")
+    }, /*#__PURE__*/React.createElement("h4", null, t), /*#__PURE__*/React.createElement("div", {
+      className: "d"
+    }, d), note ? /*#__PURE__*/React.createElement("div", {
+      className: "dash-note"
+    }, note) : children);
+  }
+  function Dashboard({
+    sessions,
+    onClose,
+    onNewChat
+  }) {
+    // freeze the data as-of-open: the 700ms/8s session syncs would otherwise
+    // recompute + repaint every chart for no visible benefit
+    const [snap] = React.useState(sessions);
+    const S = React.useMemo(() => dashCrunch(snap), [snap]);
+    const [agent, setAgent] = React.useState(null);
+    React.useEffect(() => {
+      fetch("/api/dashboard/agent").then(r => r.json()).then(d => setAgent(d && d.sessions ? d : null)).catch(() => {});
+    }, []);
+    const models = Object.entries(S.models).sort((a, b) => b[1] - a[1]);
+    // display name: strip the "provider::" prefix old messages carry in their model id
+    const modelName = id => {
+      const s = String(id);
+      return (s.includes("::") ? s.split("::").pop() : s) || s;
+    };
+    const ringItems = models.slice(0, 4).map(([label, n]) => ({
+      label: modelName(label),
+      n
+    }));
+    const moreModels = models.slice(4).reduce((a, [, n]) => a + n, 0);
+    if (moreModels) ringItems.push({
+      label: "others",
+      n: moreModels
+    });
+    const ringTotal = ringItems.reduce((a, b) => a + b.n, 0); // % of model-tagged replies
+    const petalItems = Object.entries(S.byKind).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k, n]) => ({
+      label: DASH_KIND[k] || k,
+      n
+    }));
+    const avgCtx = S.ctx.length ? S.ctx.reduce((a, b) => a + b, 0) / S.ctx.length : 0;
+    const empty = S.you + S.ai === 0;
+    const Tile = DashTile,
+      Card = DashCard; // stable identities — no remount, no blink
+
+    return /*#__PURE__*/React.createElement("div", {
+      className: "overlay",
+      style: {
+        padding: 0,
+        alignItems: "stretch"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "overlay-scrim",
+      onClick: onClose
+    }), /*#__PURE__*/React.createElement("div", {
+      className: "modal dash-modal",
+      onClick: e => e.stopPropagation()
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "modal-head"
+    }, /*#__PURE__*/React.createElement("h2", null, /*#__PURE__*/React.createElement(I.Chart, {
+      size: 18,
+      style: {
+        verticalAlign: "-3px",
+        marginRight: 8
+      }
+    }), "Dashboard"), /*#__PURE__*/React.createElement("button", {
+      className: "x-btn",
+      onClick: onClose,
+      "aria-label": "Close"
+    }, /*#__PURE__*/React.createElement(I.X, {
+      size: 18
+    }))), /*#__PURE__*/React.createElement("div", {
+      className: "dash-body"
+    }, empty ? /*#__PURE__*/React.createElement("div", {
+      className: "dash-welcome"
+    }, /*#__PURE__*/React.createElement(window.HermesGlyph, {
+      size: 46
+    }), /*#__PURE__*/React.createElement("h3", null, "Your dashboard grows as you chat"), /*#__PURE__*/React.createElement("p", null, "Once you've had a few conversations, this page fills with charts: when you chat, which models do the work, what the agent did for you, and more."), onNewChat && /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-primary",
+      onClick: () => {
+        onClose();
+        onNewChat();
+      }
+    }, "Start a chat")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+      className: "dash-hero"
+    }, /*#__PURE__*/React.createElement(Tile, {
+      v: dashNum(S.chats),
+      l: "chats"
+    }), /*#__PURE__*/React.createElement(Tile, {
+      v: dashNum(S.you + S.ai),
+      l: "messages"
+    }), /*#__PURE__*/React.createElement(Tile, {
+      v: dashNum(S.tools),
+      l: "things the agent did"
+    }), /*#__PURE__*/React.createElement(Tile, {
+      v: dashNum(S.activeDays),
+      l: "active day" + (S.activeDays === 1 ? "" : "s")
+    }), S.plansTotal > 0 && /*#__PURE__*/React.createElement(Tile, {
+      v: S.plansDone + "/" + S.plansTotal,
+      l: "plan steps completed"
+    }), S.images > 0 && /*#__PURE__*/React.createElement(Tile, {
+      v: dashNum(S.images),
+      l: "images shared"
+    })), /*#__PURE__*/React.createElement("div", {
+      className: "dash-grid"
+    }, /*#__PURE__*/React.createElement(Card, {
+      t: "When you chat",
+      d: "A 24-hour clock \u2014 longer hands mean busier hours."
+    }, /*#__PURE__*/React.createElement(ClockChart, {
+      hours: S.hours
+    })), /*#__PURE__*/React.createElement(Card, {
+      t: "Models doing the work",
+      d: "Each ring is a model \u2014 how far it reaches around is its share of replies.",
+      note: ringItems.length ? null : "No replies yet."
+    }, /*#__PURE__*/React.createElement(RingChart, {
+      items: ringItems,
+      total: ringTotal
+    })), /*#__PURE__*/React.createElement(Card, {
+      t: "What the agent did for you",
+      d: "Each petal is a kind of work \u2014 a bigger petal means it happened more.",
+      note: petalItems.length ? null : "The agent hasn't used tools here yet — ask it to run a command or read a file."
+    }, /*#__PURE__*/React.createElement(PetalChart, {
+      items: petalItems
+    })), /*#__PURE__*/React.createElement(Card, {
+      t: "How fast replies arrive",
+      d: "Every dot is one reply \u2014 the dotted line marks a typical wait.",
+      note: S.speeds.length ? null : "Reply timings appear after your next few chats."
+    }, /*#__PURE__*/React.createElement(SpeedDots, {
+      speeds: S.speeds
+    })), /*#__PURE__*/React.createElement(Card, {
+      t: "The conversation balance",
+      d: "Who does the talking \u2014 you, or the agent."
+    }, /*#__PURE__*/React.createElement(Butterfly, {
+      you: S.wordsYou,
+      ai: S.wordsAi
+    })), /*#__PURE__*/React.createElement(Card, {
+      t: "Memory in use",
+      d: "How much of the AI's working memory a typical reply needs.",
+      note: S.ctx.length ? null : "Appears once the agent reports its memory use (chat through your local agent)."
+    }, /*#__PURE__*/React.createElement(GaugeArc, {
+      pct: avgCtx
+    }))), /*#__PURE__*/React.createElement(Card, {
+      full: true,
+      t: "Your last 10 weeks",
+      d: "Each square is a day \u2014 the deeper the color, the more you chatted."
+    }, /*#__PURE__*/React.createElement(HeatStrip, {
+      days: S.days
+    })), /*#__PURE__*/React.createElement(Card, {
+      full: true,
+      t: "Your biggest chats",
+      d: "The conversations with the most back-and-forth."
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "dash-rows"
+    }, S.top.map((c, i) => /*#__PURE__*/React.createElement("div", {
+      key: i,
+      className: "dash-row"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "ttl",
+      title: c.title
+    }, c.title), /*#__PURE__*/React.createElement("span", {
+      className: "bar"
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        width: c.n / Math.max(1, S.top[0].n) * 100 + "%"
+      }
+    })), /*#__PURE__*/React.createElement("span", {
+      className: "cnt"
+    }, c.n))))), agent && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+      className: "dash-sec"
+    }, /*#__PURE__*/React.createElement(I.Bot, {
+      size: 15
+    }), " Your agent \u2014 lifetime, across everything it does", /*#__PURE__*/React.createElement("span", {
+      className: "dash-sec-sub"
+    }, "terminal, editors, schedules, messengers \u2014 not just AgentBay")), /*#__PURE__*/React.createElement("div", {
+      className: "dash-hero"
+    }, /*#__PURE__*/React.createElement(Tile, {
+      v: dashNum(agent.sessions),
+      l: "agent sessions"
+    }), /*#__PURE__*/React.createElement(Tile, {
+      v: dashNum(agent.messages),
+      l: "messages handled"
+    }), /*#__PURE__*/React.createElement(Tile, {
+      v: dashNum(agent.tool_calls),
+      l: "tools run"
+    }), /*#__PURE__*/React.createElement(Tile, {
+      v: dashNum(agent.tokens_in + agent.tokens_out),
+      l: "tokens processed"
+    }), agent.est_cost_usd > 0 && /*#__PURE__*/React.createElement(Tile, {
+      v: "$" + agent.est_cost_usd,
+      l: "estimated spend"
+    })), /*#__PURE__*/React.createElement(Card, {
+      full: true,
+      t: "Where the agent's chats come from",
+      d: "One bar, split by surface \u2014 hover a segment for details."
+    }, /*#__PURE__*/React.createElement(SourceBar, {
+      items: agent.by_source || []
+    })))))));
+  }
   window.Views = {
     Login,
     ModelMenu,
     Notes,
     Tour,
-    OnboardingGate
+    OnboardingGate,
+    Dashboard
   };
 })();
 
@@ -7711,7 +8601,10 @@ Object.assign(window, {
     tts: "Browser (system)",
     showThinking: true,
     showTools: true,
-    fallbackModel: ""
+    fallbackModel: "",
+    dashboard: false,
+    scheduledTasks: false,
+    showUsage: false
   };
   function buildUser(name) {
     const nm = (name || "").trim();
@@ -8208,6 +9101,7 @@ Object.assign(window, {
           role: "assistant",
           content: "",
           model,
+          t: Date.now(),
           ts: new Date().toLocaleTimeString([], {
             hour: "numeric",
             minute: "2-digit"
@@ -8413,6 +9307,7 @@ Object.assign(window, {
           ...last,
           content: full,
           thought: Math.min(secs, 9),
+          took: secs,
           followups,
           reasoning: meta.reasoning || "",
           tools: meta.tools || [],
@@ -8529,7 +9424,8 @@ Object.assign(window, {
       const title = (typed || attachments[0] && attachments[0].name || "New chat").slice(0, 40);
       const userMsg = {
         role: "user",
-        content: body
+        content: body,
+        t: Date.now()
       };
       if (images.length) userMsg.images = images;
       let sid = activeId;
@@ -8910,6 +9806,10 @@ Object.assign(window, {
       onOpenNotes: () => setModal({
         kind: "notes"
       }),
+      onOpenDashboard: () => setModal({
+        kind: "dashboard"
+      }),
+      showDashboard: settings.dashboard === true,
       onOpenProjects: () => setModal({
         kind: "projects"
       }),
@@ -9244,6 +10144,10 @@ Object.assign(window, {
       }
     }), modal && modal.kind === "notes" && /*#__PURE__*/React.createElement(V.Notes, {
       onClose: () => setModal(null)
+    }), modal && modal.kind === "dashboard" && /*#__PURE__*/React.createElement(V.Dashboard, {
+      sessions: sessions,
+      onClose: () => setModal(null),
+      onNewChat: newChat
     }), modal && modal.kind === "projects" && /*#__PURE__*/React.createElement(Hub.Projects, {
       projects: projects,
       setProjects: setProjects,

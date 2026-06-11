@@ -2264,6 +2264,92 @@ def set_reasoning_effort(effort):
         return False, str(e)[:200]
 
 
+# ---- dashboard: lifetime stats from the local agent's own store ------------
+def _hermes_home():
+    return Path(os.environ.get("HERMES_HOME") or (str(Path.home()) + "/.hermes"))
+
+
+def agent_dashboard_stats():
+    """Read-only aggregates from the local Hermes agent's state.db — every chat the
+    agent has ever had, across ALL surfaces (CLI, editors, Telegram, AgentBay…):
+    sessions, messages, tool calls, tokens and estimated spend. {} when there is
+    no local agent DB (e.g. the multi-user EC2 gateway), so the UI just hides it."""
+    db = _hermes_home() / "state.db"
+    if _is_multiuser_ec2() or not db.exists():
+        return {}
+    import sqlite3
+    try:
+        c = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2)
+        row = c.execute("select count(*), coalesce(sum(message_count),0), coalesce(sum(tool_call_count),0),"
+                        " coalesce(sum(input_tokens),0), coalesce(sum(output_tokens),0),"
+                        " coalesce(sum(estimated_cost_usd),0.0) from sessions").fetchone()
+        by_src = c.execute("select coalesce(nullif(source,''),'other'), count(*) from sessions"
+                           " group by 1 order by 2 desc limit 6").fetchall()
+        by_model = c.execute("select model, count(*) from sessions where model is not null and model!=''"
+                             " group by 1 order by 2 desc limit 5").fetchall()
+        c.close()
+        return {"sessions": row[0], "messages": int(row[1]), "tool_calls": int(row[2]),
+                "tokens_in": int(row[3]), "tokens_out": int(row[4]),
+                "est_cost_usd": round(float(row[5] or 0), 2),
+                "by_source": [{"source": s, "n": n} for s, n in by_src],
+                "by_model": [{"model": m, "n": n} for m, n in by_model]}
+    except Exception:
+        return {}
+
+
+# ---- scheduled tasks: the agent's cron jobs (~/.hermes/cron/jobs.json) -----
+def _cron_file():
+    return _hermes_home() / "cron" / "jobs.json"
+
+
+def cron_jobs():
+    """The agent's scheduled jobs. The `hermes cron` CLI and scheduler share this
+    file; we read it directly (the list CLI is unreliable) and keep edits minimal."""
+    try:
+        d = json.loads(_cron_file().read_text())
+        return [j for j in (d.get("jobs") or []) if isinstance(j, dict)]
+    except Exception:
+        return []
+
+
+def cron_mutate(action, job_id=None, job=None):
+    """toggle / delete / create on jobs.json. Read-modify-write of the shared file —
+    same approach the CLI takes. Returns (ok, message)."""
+    p = _cron_file()
+    try:
+        d = json.loads(p.read_text()) if p.exists() else {"jobs": []}
+    except Exception:
+        d = {"jobs": []}
+    jobs = [j for j in (d.get("jobs") or []) if isinstance(j, dict)]
+    if action == "toggle" and job_id:
+        for j in jobs:
+            if j.get("id") == job_id:
+                j["enabled"] = not j.get("enabled", True)
+                break
+        else:
+            return False, "job not found"
+    elif action == "delete" and job_id:
+        n = len(jobs)
+        jobs = [j for j in jobs if j.get("id") != job_id]
+        if len(jobs) == n:
+            return False, "job not found"
+    elif action == "create" and job:
+        name = (job.get("name") or "").strip()
+        sched = (job.get("schedule") or "").strip()
+        prompt = (job.get("prompt") or "").strip()
+        if not (name and sched and prompt):
+            return False, "name, schedule and prompt are required"
+        jobs.append({"id": secrets.token_hex(6), "name": name[:80], "model": None, "provider": None,
+                     "base_url": None, "prompt": prompt, "script": "", "no_agent": False,
+                     "enabled": True, "schedule": sched[:80], "deliver": "local", "workdir": None})
+    else:
+        return False, "unknown action"
+    d["jobs"] = jobs
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(d, indent=2))
+    return True, "ok"
+
+
 def _agent_kind(cfg=None):
     """Which local agent backs chat: 'hermes' (driven via ACP) or 'openclaw' (driven
     via the openclaw CLI). None on multi-user EC2 (gateway) or when neither is
@@ -3508,6 +3594,11 @@ class Handler(BaseHTTPRequestHandler):
                                     "available": _agent_kind(load_config()) == "hermes"})
         if path == "/api/agent/providers":
             return self._send(200, agent_providers_status())
+        if path == "/api/dashboard/agent":
+            return self._send(200, agent_dashboard_stats())
+        if path == "/api/agent/cron":
+            avail = _agent_kind(load_config()) == "hermes"
+            return self._send(200, {"available": bool(avail), "jobs": cron_jobs() if avail else []})
         if path == "/api/import/sessions":
             try:
                 return self._send(200, {"sessions": read_agent_sessions()})
@@ -3785,6 +3876,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/providers/add-agent":
             ok = set_agent_provider(data.get("id"), data.get("add", True))
             return self._send(200 if ok else 404, {"ok": ok, "models": enabled_models(load_config())})
+        if path == "/api/agent/cron":
+            ok, msg = cron_mutate(data.get("action"), data.get("id"), data.get("job"))
+            return self._send(200 if ok else 400, {"ok": ok, "message": msg, "jobs": cron_jobs()})
         if path == "/api/followups":
             cfg = load_config()
             res = gen_followups(cfg, data.get("messages") or [], provider=data.get("provider"), model=data.get("model"))
