@@ -1,10 +1,27 @@
-# AgentBay
+<div align="center">
 
-A tiny, no-build chat app for running local AI agents. Pick an agent, plug in a
-model (your own API key or a local server), and start chatting — in a clean
-interface that works on desktop and mobile.
+# 🐚 AgentBay
 
-No Electron, no `node_modules`, no build step. Just Python 3 and a single HTML page.
+**A minimal chat home for your local AI agent.**
+
+*No build. No node_modules. No clutter. Just Python 3 and your browser.*
+
+</div>
+
+---
+
+## Why this exists
+
+AgentBay was created with two things in mind:
+
+1. **[Hermes](https://github.com/NousResearch) is a powerful agent — but it has no UI.** It lives in the terminal.
+2. **The open-source chat UIs that do exist are quite complex.** Dozens of panels, build tools, Docker files — too much, too soon.
+
+So I built the missing middle: **one minimal UI that even non-tech users can handle.** Your mom could install it. Your teammate who's never opened a terminal can chat with a real agent — one that runs commands, reads files, and browses the web — from a page that looks as friendly as any chat app.
+
+It's built first as a **minimal UI for the Hermes agent**, and it also works with other agents like **OpenClaw**.
+
+> **Honest note:** testing has only been done with Hermes so far. With any other agent you may face issues — if you do, or if you need a feature, [just let me know](https://github.com/NullNaveen/agentbay/issues). I read everything.
 
 ## Install
 
@@ -18,124 +35,39 @@ curl -fsSL https://raw.githubusercontent.com/NullNaveen/agentbay/main/install.sh
 irm https://raw.githubusercontent.com/NullNaveen/agentbay/main/install.ps1 | iex
 ```
 
-Or run it from a clone:
+Or from a clone:
 ```bash
 git clone https://github.com/NullNaveen/agentbay.git
 cd agentbay
 python3 server.py
 ```
 
-It starts a local server and opens `http://127.0.0.1:8700`. If that port is
-busy it picks the next free one and prints the real URL. No Python? The
-installer sets it up for you (winget on Windows, your package manager / Homebrew
-on Linux & macOS).
+It opens at `http://127.0.0.1:8700` (or the next free port). No Python? The installer sets it up for you. The first run also drops an **AgentBay icon** on your Desktop / Applications / Start Menu — after that, no terminal ever again.
 
-### Opening it again later — no terminal
+## What you get
 
-The first run drops an **AgentBay icon** where you'd expect it, so you never need
-the terminal again:
+- **Chat with a real agent** — it runs commands, edits files, browses the web. You watch its thinking, its tool calls, and its live task plan as it works.
+- **Any model, your keys** — DeepSeek, OpenAI, Claude, Gemini, or a local server (Ollama / LM Studio / MLX). Or borrow the providers your agent is already signed into — no key to paste.
+- **Friendly everywhere** — phones, tablets, light/dark, markdown, math, diagrams. Share a private link (with QR) to use it from your phone.
+- **Yours** — everything stays on your machine. Keys live in `~/.agentbay/config.json` (chmod 600). Optional password lock when you open it to the network.
 
-- **Windows** — on your **Desktop** and in the **Start Menu**.
-- **macOS** — in **Applications** (and Spotlight / Launchpad).
-- **Linux** — in your **applications menu** and on the Desktop.
+**There's a lot more under the hood** — a chart dashboard, scheduled tasks, image input, slash commands, and a drawer full of optional settings.
 
-Click it to open AgentBay (it starts in the background and opens your browser; if
-it's already running it just brings up the tab). You can re-add the icon any time
-from **Settings → General → Desktop shortcut**.
+### 📖 **[Read the full guide → FEATURES.md](FEATURES.md)**
 
-## Update
+## Update & uninstall
 
-In the app, an **"Update available"** banner appears whenever a new version is on
-GitHub — click **Update now** and it updates itself and reloads. You can also use
-**Settings → About → Check for updates**.
+An **"Update available"** banner appears in the app whenever a new version is on GitHub — one click updates and reloads. (Or: Settings → About → Check for updates.)
 
-For the terminal:
+Uninstall = delete one folder. Nothing is installed system-wide:
 ```bash
-# if you installed with the one-liner (re-runs the installer, pulls latest)
-curl -fsSL https://raw.githubusercontent.com/NullNaveen/agentbay/main/install.sh | bash   # macOS/Linux
-irm https://raw.githubusercontent.com/NullNaveen/agentbay/main/install.ps1 | iex          # Windows
-
-# if you cloned it
-cd agentbay && git pull && python3 server.py
+rm -rf ~/.agentbay        # macOS / Linux
+Remove-Item -Recurse -Force "$HOME\.agentbay"   # Windows
 ```
 
-## Uninstall
+## Issues & ideas
 
-AgentBay is self-contained — delete its folder. Nothing is installed system-wide.
-```bash
-# macOS / Linux
-rm -rf ~/.agentbay
-
-# Windows (PowerShell)
-Remove-Item -Recurse -Force "$HOME\.agentbay"
-```
-`~/.agentbay/app` is the code; `~/.agentbay/config.json` holds your settings/keys.
-To reinstall fresh, remove the folder then run the install one-liner again.
-
-### No terminal? Just double-click
-
-Inside the folder there are ready-made launchers — no commands to type:
-
-- **macOS** — double-click **`AgentBay.command`** (first time: right-click → Open → Open).
-- **Windows** — double-click **`AgentBay.bat`**.
-- **Linux** — run **`bash start.sh`** (or mark it executable and double-click → Run).
-
-Each one starts AgentBay and opens it in your browser. Only Python 3 is needed.
-
-## What it does
-
-- **Pick a model** — OpenAI, Claude, or DeepSeek with your API key, or a local
-  server (Ollama / MLX / LM Studio / vLLM). Paste the key, fetch the model list,
-  choose which models to show. No typing model names.
-- **Chat** — clean thread, multiple conversations, light/dark, markdown + code.
-- **Projects** — give a project standing instructions and upload reference files;
-  every chat in it uses them.
-- **Remote access** — one click opens a private share link (with QR) so you can
-  use it from your phone or send it to someone. The link carries a secret key and
-  can be turned off any time.
-- **Agent setup** — installs / updates the local agent runtime for your OS.
-
-Everything is stored locally. Your API key lives in `~/.agentbay/config.json`
-(chmod 600) and nothing is sent anywhere except the model provider you pick.
-
-## Troubleshooting
-
-**Windows: the Hermes installer ends with `'charmap' codec can't decode byte …`**
-The Hermes installer's last step (downloading the browser engine) prints output
-that Windows' default text encoding can't read. Force UTF-8 and re-run just that
-step — Hermes itself is already installed:
-```powershell
-$env:PYTHONUTF8 = "1"
-hermes postinstall
-```
-To stop it happening again, set it permanently (then open a new terminal):
-```powershell
-setx PYTHONUTF8 1
-```
-
-**Windows: `python` opens the Microsoft Store instead of running.**
-That's the Store's placeholder. Install real Python from
-[python.org](https://www.python.org/downloads/) with **“Add python.exe to PATH”**
-ticked, or let AgentBay's installer handle it (it uses `winget`).
-
-**The agent replies like a plain chatbot (no terminal/tools).**
-That means AgentBay isn't routed through a running agent. Make sure Hermes is
-installed (Settings → Agent) and its gateway is up:
-```bash
-hermes gateway start    # or: hermes gateway run  (keep the window open)
-```
-Then ask it “run whoami” — a real username back means the agent is live.
-
-## Configuration
-
-`~/.agentbay/config.json`
-
-| key | meaning |
-|---|---|
-| `provider` | active provider — `openai` / `anthropic` / `deepseek` / `local` |
-| `active_model` | the model new chats use |
-| `providers.<id>.key` | that provider's API key |
-| `providers.<id>.models` | the models you enabled |
+Found a bug? Want a feature? **[Open an issue](https://github.com/NullNaveen/agentbay/issues)** — or just tell me. This project grows from real requests.
 
 ## License
 
