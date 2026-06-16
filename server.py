@@ -976,6 +976,71 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 _QR_BLOCK = set("▀▄██░▒▓ \xa0")   # ▀ ▄ █ shades + space
 
 
+def _md_inline(s):
+    """Inline markdown → HTML (escaped first). Handles `code`, **bold**, *italic*, [t](u)."""
+    s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    s = re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
+    s = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", s)
+    s = re.sub(r"(?<!\w)\*([^*\n]+)\*(?!\w)", r"<em>\1</em>", s)
+    s = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", r'<a href="\2" target="_blank" rel="noreferrer">\1</a>', s)
+    s = re.sub(r"\[([^\]]+)\]\(([^)\s]+\.md)\)", r'<a href="/\2">\1</a>', s)   # local doc links
+    return s
+
+
+def _md_to_html(md):
+    """Tiny, dependency-free Markdown → HTML for serving the repo docs in-browser.
+    Covers what AgentBay's .md files use: headings, lists, blockquotes, code fences,
+    hr, bold/italic/code/links, paragraphs."""
+    out, i, lines = [], 0, md.split("\n")
+    while i < len(lines):
+        ln = lines[i]
+        if ln.startswith("```"):                       # fenced code block
+            i += 1; code = []
+            while i < len(lines) and not lines[i].startswith("```"):
+                code.append(lines[i]); i += 1
+            i += 1
+            esc = "\n".join(code).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            out.append("<pre><code>%s</code></pre>" % esc); continue
+        if re.match(r"^\s*(---+|\*\*\*+)\s*$", ln):
+            out.append("<hr>"); i += 1; continue
+        h = re.match(r"^(#{1,6})\s+(.*)$", ln)
+        if h:
+            lvl = len(h.group(1)); out.append("<h%d>%s</h%d>" % (lvl, _md_inline(h.group(2)), lvl)); i += 1; continue
+        if re.match(r"^\s*>", ln):                      # blockquote (possibly multi-line)
+            buf = []
+            while i < len(lines) and re.match(r"^\s*>", lines[i]):
+                buf.append(re.sub(r"^\s*>\s?", "", lines[i])); i += 1
+            out.append("<blockquote>%s</blockquote>" % _md_inline(" ".join(buf))); continue
+        if re.match(r"^\s*[-*]\s+", ln):                # unordered list
+            buf = []
+            while i < len(lines) and re.match(r"^\s*[-*]\s+", lines[i]):
+                buf.append("<li>%s</li>" % _md_inline(re.sub(r"^\s*[-*]\s+", "", lines[i]))); i += 1
+            out.append("<ul>%s</ul>" % "".join(buf)); continue
+        if re.match(r"^\s*\d+\.\s+", ln):               # ordered list
+            buf = []
+            while i < len(lines) and re.match(r"^\s*\d+\.\s+", lines[i]):
+                buf.append("<li>%s</li>" % _md_inline(re.sub(r"^\s*\d+\.\s+", "", lines[i]))); i += 1
+            out.append("<ol>%s</ol>" % "".join(buf)); continue
+        if ln.strip() == "":
+            i += 1; continue
+        para = [ln]; i += 1                             # paragraph (gather until blank/block)
+        while i < len(lines) and lines[i].strip() != "" and not re.match(r"^(#{1,6}\s|\s*[-*]\s|\s*\d+\.\s|\s*>|```|---)", lines[i]):
+            para.append(lines[i]); i += 1
+        out.append("<p>%s</p>" % _md_inline(" ".join(para)))
+    return "\n".join(out)
+
+
+_DOC_CSS = ("body{font:16px/1.65 -apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;"
+            "max-width:760px;margin:0 auto;padding:48px 22px 120px;color:#1c1b1a;background:#faf7f2}"
+            "h1{font-size:30px;margin:.2em 0 .6em}h2{font-size:22px;margin:1.6em 0 .5em;border-bottom:1px solid #e7e0d6;padding-bottom:.25em}"
+            "h3{font-size:18px;margin:1.4em 0 .4em}a{color:#b06a2c}code{background:#efe9df;padding:.12em .4em;border-radius:5px;font-size:.9em}"
+            "pre{background:#1c1b22;color:#e8e6f0;padding:14px 16px;border-radius:10px;overflow:auto}pre code{background:none;color:inherit;padding:0}"
+            "blockquote{border-left:3px solid #d8b888;margin:1em 0;padding:.2em 0 .2em 16px;color:#5a534a;background:#f3ecdf;border-radius:0 8px 8px 0}"
+            "hr{border:none;border-top:1px solid #e7e0d6;margin:2em 0}ul,ol{padding-left:1.4em}li{margin:.3em 0}"
+            "@media(prefers-color-scheme:dark){body{background:#15140f;color:#e9e4da}"
+            "h2,hr{border-color:#2e2a22}code{background:#2a261d}blockquote{background:#1e1b14;color:#b8b0a2}}")
+
+
 class _OcReasoningPeeler:
     """OpenClaw doesn't stream a separate `agent_thought_chunk` for its local models —
     it inlines chain-of-thought into the reply (as a `<think>…</think>` wrapper, or a
@@ -1048,6 +1113,94 @@ class _OcReasoningPeeler:
             out.append(("token", self.buf))     # never hide the whole reply in the panel
         self.buf = ""; self.phase = "answer"
         return out
+
+
+# ---- OpenClaw thinking (reasoning) -----------------------------------------
+# OpenClaw does NOT stream its reasoning over ACP for local ollama models: the
+# gateway runs the model with thinking OFF by default, and even when forced the
+# `type:"thinking"` blocks are stripped before the ACP bridge for direct sessions
+# (verified empirically + in OpenClaw's source). The reasoning DOES survive in the
+# session transcript as {"type":"thinking","thinking":"…"} blocks — which is exactly
+# what OpenClaw's own UI renders. So we (1) make sure the agent's default thinking
+# level is on, and (2) read the thinking out of the transcript after each turn.
+_oc_think_ensured = [False]
+
+
+def _ensure_oc_thinking():
+    """Raise OpenClaw's default thinking level once so the model actually reasons
+    (else the transcript has nothing to show). Idempotent, cached per process,
+    respects an existing non-off setting. Best-effort."""
+    if _oc_think_ensured[0]:
+        return
+    _oc_think_ensured[0] = True
+    oc = which("openclaw")
+    if not oc:
+        return
+    try:
+        cfgp = Path.home() / ".openclaw" / "openclaw.json"
+        cur = ""
+        if cfgp.exists():
+            d = json.loads(cfgp.read_text())
+            cur = (((d.get("agents") or {}).get("defaults") or {}).get("thinkingDefault") or "")
+        if cur and cur != "off":
+            return                       # user already enabled thinking — leave it alone
+        env = _agent_env()
+        subprocess.run([oc, "config", "set", "agents.defaults.thinkingDefault", "medium"],
+                       capture_output=True, text=True, timeout=30, env=env)
+        subprocess.run([oc, "gateway", "restart"], capture_output=True, text=True, timeout=45, env=env)
+        time.sleep(2)                    # let the gateway come back up before we connect
+    except Exception:
+        pass
+
+
+def _oc_session_dir():
+    return Path.home() / ".openclaw" / "agents" / "main" / "sessions"
+
+
+def _oc_thinking_from_file(path):
+    """Extract the latest turn's reasoning from an OpenClaw session .jsonl — every
+    {"type":"thinking"} block of the assistant messages since the last user message."""
+    recs = []
+    for line in Path(path).read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            recs.append(json.loads(line))
+        except Exception:
+            pass
+    last_user = -1
+    for i, r in enumerate(recs):
+        role = (r.get("message") or {}).get("role") or r.get("role")
+        if role == "user":
+            last_user = i
+    thoughts = []
+    for r in recs[last_user + 1:]:
+        msg = r.get("message") or {}
+        if (msg.get("role") or r.get("role")) != "assistant":
+            continue
+        for c in (msg.get("content") or []):
+            if isinstance(c, dict) and c.get("type") == "thinking":
+                t = (c.get("thinking") or "").strip()
+                if t:
+                    thoughts.append(t)
+    return "\n\n".join(thoughts).strip()
+
+
+def _oc_last_thinking(before_mtime=None):
+    """The reasoning of the most recent OpenClaw turn, read from the newest session
+    transcript. `before_mtime` guards against reading a stale transcript when nothing
+    was just written."""
+    try:
+        files = [f for f in _oc_session_dir().glob("*.jsonl") if not f.name.endswith(".trajectory.jsonl")]
+        if not files:
+            return ""
+        newest = max(files, key=lambda f: f.stat().st_mtime)
+        if before_mtime is not None and newest.stat().st_mtime < before_mtime - 1:
+            return ""                    # nothing fresh was written for this turn
+        return _oc_thinking_from_file(newest)
+    except Exception:
+        return ""
 
 
 def _whatsapp_dir():
@@ -2768,6 +2921,13 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=N
     is_oc = kind == "openclaw"
     bin_name = "openclaw" if is_oc else "hermes"
     hb = which(bin_name)
+    oc_think_mark = None
+    if is_oc:
+        _ensure_oc_thinking()                  # make sure the model reasons (once)
+        try:
+            oc_think_mark = max((f.stat().st_mtime for f in _oc_session_dir().glob("*.jsonl")), default=0)
+        except Exception:
+            oc_think_mark = 0
     cwd = cwd or str(Path.home())
     if model_id in ("default", "hermes-agent", ""):
         model_id = None
@@ -2846,7 +3006,7 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=N
     capturing = [False]
     tool_idx = {}; tool_n = [0]   # toolCallId -> slot, so multiple tools don't collapse into one
     tool_state = {}               # toolCallId -> merged card state (updates carry only deltas)
-    peeler = _OcReasoningPeeler() if is_oc else None   # OpenClaw inlines reasoning → peel it out
+    peeler = None   # OpenClaw reasoning now comes from the transcript (see below), not inline
 
     def _send_prompt(sid):
         capturing[0] = True
@@ -2990,6 +3150,10 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=N
         if peeler is not None:
             for pev, pdata in peeler.finish():   # flush any buffered tail to the answer
                 yield (pev, pdata)
+        if is_oc:
+            think = _oc_last_thinking(oc_think_mark)   # OpenClaw's reasoning lives in the transcript
+            if think:
+                yield ("reasoning", think)
         yield ("done", {})
     finally:
         if session_id:
@@ -3104,7 +3268,12 @@ def _openclaw_chat(messages, session_id=None, model=None, images=None, env=None)
         yield ("token", "⚠ the on-device agent isn't available.")
         yield ("done", {})
         return
-    cmd = [oc, "agent", "--agent", "main", "-m", user_text, "--json", "--timeout", "600"]
+    _ensure_oc_thinking()
+    try:
+        mark = max((f.stat().st_mtime for f in _oc_session_dir().glob("*.jsonl")), default=0)
+    except Exception:
+        mark = 0
+    cmd = [oc, "agent", "--agent", "main", "-m", user_text, "--json", "--timeout", "600", "--thinking", "medium"]
     if model:
         cmd += ["--model", model]
     if session_id:
@@ -3120,19 +3289,29 @@ def _openclaw_chat(messages, session_id=None, model=None, images=None, env=None)
         yield ("token", "⚠ agent error: %s" % e)
         yield ("done", {})
         return
-    reply = ""
+    reply = ""; sess_file = None
     try:
         d = json.loads(r.stdout or "{}")
-        payloads = ((d.get("result") or {}).get("payloads")) or []
+        res = d.get("result") or {}
+        payloads = res.get("payloads") or []
         reply = " ".join(p.get("text", "") for p in payloads if isinstance(p, dict)).strip()
+        sess_file = ((res.get("meta") or {}).get("agentMeta") or {}).get("sessionFile")
     except Exception:
         reply = (r.stdout or "").strip()
     reply = _ANSI_RE.sub("", reply).strip()
     if not reply:
         reply = "⚠ the agent returned nothing." + ((" " + (r.stderr or "")[:200]) if r.stderr else "")
-    _pl = _OcReasoningPeeler()                       # peel inlined reasoning → thinking panel
-    for pev, pdata in _pl.feed(reply) + _pl.finish():
-        yield (pev, pdata)
+    think = ""                                        # reasoning lives in the transcript
+    if sess_file:
+        try:
+            think = _oc_thinking_from_file(Path(sess_file))
+        except Exception:
+            think = ""
+    if not think:
+        think = _oc_last_thinking(mark)
+    if think:
+        yield ("reasoning", think)
+    yield ("token", reply)
     yield ("done", {})
 
 
@@ -3898,6 +4077,8 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path == "/" or path == "/index.html":
             return self._serve_file("index.html", "text/html; charset=utf-8")
+        if path in ("/EXPERIMENTAL.md", "/FEATURES.md", "/README.md"):
+            return self._serve_doc(path[1:])
         if path == "/api/share/status":
             return self._send(200, share_status())
         if path == "/api/app/version":
@@ -4349,6 +4530,21 @@ class Handler(BaseHTTPRequestHandler):
             res = gen_followups(cfg, data.get("messages") or [], provider=data.get("provider"), model=data.get("model"))
             return self._send(200, res)
         return self._send(404, {"error": "not found"})
+
+    def _serve_doc(self, name):
+        """Render a repo-root Markdown doc (EXPERIMENTAL.md, FEATURES.md, README.md)
+        as a styled HTML page — so in-app 'how it works' links work offline + pre-push."""
+        if name not in ("EXPERIMENTAL.md", "FEATURES.md", "README.md"):
+            return self._send(404, {"error": "not found"})
+        p = (ROOT / name).resolve()
+        if not str(p).startswith(str(ROOT.resolve())) or not p.is_file():
+            return self._send(404, {"error": "not found"})
+        title = name.replace(".md", "")
+        html = ("<!doctype html><html><head><meta charset=utf-8>"
+                "<meta name=viewport content='width=device-width,initial-scale=1'>"
+                "<title>AgentBay — %s</title><style>%s</style></head><body>%s</body></html>"
+                % (title, _DOC_CSS, _md_to_html(p.read_text())))
+        self._send(200, html.encode(), "text/html; charset=utf-8")
 
     def _serve_file(self, rel, ctype):
         p = (WEB / rel).resolve()

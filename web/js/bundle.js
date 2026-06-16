@@ -1675,7 +1675,7 @@
     }, avatars !== false && /*#__PURE__*/React.createElement("span", {
       className: "am-icon"
     }, /*#__PURE__*/React.createElement(window.AgentGlyph, {
-      size: 17,
+      size: 23,
       flap: !!streaming
     })), /*#__PURE__*/React.createElement("span", {
       className: "am-name"

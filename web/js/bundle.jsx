@@ -816,7 +816,7 @@
     return (
       <div className="turn assistant anim-fadeup">
         <div className="assistant-head">
-          {avatars !== false && <span className="am-icon"><window.AgentGlyph size={17} flap={!!streaming} /></span>}
+          {avatars !== false && <span className="am-icon"><window.AgentGlyph size={23} flap={!!streaming} /></span>}
           <span className="am-name">{meta.name}</span>
           {streaming && !msg.content && <span className="am-thinking shimmer-text">Thinking…</span>}
           {showTimestamps && msg.ts && <span className="ts">{msg.ts}</span>}
