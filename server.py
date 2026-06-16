@@ -2302,9 +2302,31 @@ def _cron_file():
     return _hermes_home() / "cron" / "jobs.json"
 
 
+def _oc_cron_norm(j):
+    sch = j.get("schedule") or {}
+    return {"id": j.get("id"), "name": j.get("name") or j.get("id"),
+            "schedule": (sch.get("expr") if isinstance(sch, dict) else sch) or "",
+            "enabled": bool(j.get("enabled", True)),
+            "prompt": ((j.get("payload") or {}).get("text") or "")}
+
+
+def _oc_cron_list():
+    oc = which("openclaw")
+    if not oc:
+        return []
+    try:
+        r = subprocess.run([oc, "cron", "list", "--json"], capture_output=True, text=True, timeout=25, env=_agent_env())
+        d = json.loads(r.stdout or "{}")
+        return [_oc_cron_norm(j) for j in (d.get("jobs") or []) if isinstance(j, dict)]
+    except Exception:
+        return []
+
+
 def cron_jobs():
-    """The agent's scheduled jobs. The `hermes cron` CLI and scheduler share this
-    file; we read it directly (the list CLI is unreliable) and keep edits minimal."""
+    """The active agent's scheduled jobs (normalized). Hermes reads its jobs.json
+    directly (the list CLI is unreliable); OpenClaw goes through `openclaw cron list`."""
+    if _agent_kind(load_config()) == "openclaw":
+        return _oc_cron_list()
     try:
         d = json.loads(_cron_file().read_text())
         return [j for j in (d.get("jobs") or []) if isinstance(j, dict)]
@@ -2312,9 +2334,45 @@ def cron_jobs():
         return []
 
 
+def _oc_cron_mutate(action, job_id=None, job=None):
+    oc = which("openclaw")
+    if not oc:
+        return False, "openclaw not found"
+    env = _agent_env()
+    try:
+        if action == "toggle" and job_id:
+            cur = next((j for j in _oc_cron_list() if j["id"] == job_id), None)
+            if not cur:
+                return False, "job not found"
+            cmd = [oc, "cron", "disable" if cur["enabled"] else "enable", job_id]
+        elif action == "delete" and job_id:
+            cmd = [oc, "cron", "rm", job_id]
+        elif action == "create" and job:
+            name = (job.get("name") or "").strip()
+            sched = (job.get("schedule") or "").strip()
+            prompt = (job.get("prompt") or "").strip()
+            if not (name and sched and prompt):
+                return False, "name, schedule and prompt are required"
+            cmd = [oc, "cron", "add", "--name", name[:80], "--message", prompt, "--agent", "main"]
+            if sched.lower().startswith("every "):
+                cmd += ["--every", sched[6:].strip()]
+            else:
+                cmd += ["--cron", sched]           # let openclaw validate cron exprs
+        else:
+            return False, "unknown action"
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=env)
+        if r.returncode == 0:
+            return True, "ok"
+        return False, _ANSI_RE.sub("", (r.stderr or r.stdout or "failed").strip())[:200]
+    except Exception as e:
+        return False, str(e)[:200]
+
+
 def cron_mutate(action, job_id=None, job=None):
-    """toggle / delete / create on jobs.json. Read-modify-write of the shared file —
-    same approach the CLI takes. Returns (ok, message)."""
+    """toggle / delete / create. OpenClaw routes through its `cron` CLI; Hermes does a
+    read-modify-write of jobs.json (same approach its CLI takes). Returns (ok, message)."""
+    if _agent_kind(load_config()) == "openclaw":
+        return _oc_cron_mutate(action, job_id, job)
     p = _cron_file()
     try:
         d = json.loads(p.read_text()) if p.exists() else {"jobs": []}
@@ -2552,9 +2610,14 @@ def _latest_user(messages):
 
 
 def _acp_tool_text(u):
-    """The tool's OUTPUT (result content) from an ACP tool_call update."""
+    """The tool's OUTPUT (result content) from an ACP tool_call update. Hermes puts it
+    under `content[]`; OpenClaw under `rawOutput.content[]` with `{type:text,text}`."""
     parts = []
-    for c in (u.get("content") or []):
+    blocks = list(u.get("content") or [])
+    ro = u.get("rawOutput")
+    if isinstance(ro, dict):
+        blocks += list(ro.get("content") or [])
+    for c in blocks:
         if isinstance(c, dict):
             if c.get("type") == "content" and isinstance(c.get("content"), dict):
                 t = c["content"].get("text")
@@ -2620,29 +2683,42 @@ def _cancel_turn(session_id):
     return True
 
 
-def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=None, images=None, env=None):
-    """Run ONE agent turn via `hermes acp` over stdio. Yields (type, data):
-    token / reasoning / tool / error / done. Sessions persist (agentbay id ↔ ACP id).
-    model_id (canonical `provider:model`, e.g. `deepseek:deepseek-v4-flash`) is applied
-    per-session via session/set_model; `env` (e.g. the provider's saved API key) is
-    handed to the agent process so it can actually call that provider."""
-    hb = which("hermes")
+def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=None, images=None, env=None, kind="hermes"):
+    """Run ONE agent turn over stdio ACP (JSON-RPC). Yields (type, data):
+    token / reasoning / tool / plan / usage / error / done. Sessions persist
+    (agentbay id ↔ ACP id). Drives `hermes acp` OR `openclaw acp` — same protocol.
+    Hermes: model picked per-session via session/set_model; `env` carries the
+    provider's saved key. OpenClaw: started with `--session agent:main:<id>` to bind
+    the bridge to the real agent (else prompts go nowhere); set_model isn't supported
+    so the model is OpenClaw's own configured default."""
+    is_oc = kind == "openclaw"
+    bin_name = "openclaw" if is_oc else "hermes"
+    hb = which(bin_name)
     cwd = cwd or str(Path.home())
     if model_id in ("default", "hermes-agent", ""):
         model_id = None
     proc_env = dict(os.environ)
     if env:
         proc_env.update({k: v for k, v in env.items() if v})
+    if is_oc:
+        proc_env = _agent_env(proc_env)         # openclaw is a node script — needs node on PATH
     user_text = _latest_user(messages)
     if not hb or not user_text:
         yield ("error", "no local agent or empty message")
         yield ("done", {})
         return
+    acp_cmd = [hb, "acp"]
+    if is_oc:
+        # Bind the ACP bridge to the agent's REAL session store. A non-existent
+        # per-chat label produces an unbound session that streams nothing, so always
+        # bind to the default agent session; per-AgentBay-chat isolation still comes
+        # from session/new returning a fresh sessionId (kept in the kind-namespaced map).
+        acp_cmd += ["--session", "agent:main:main"]
     try:
-        proc = subprocess.Popen([hb, "acp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        proc = subprocess.Popen(acp_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True, bufsize=1, env=proc_env)
     except Exception as e:
-        yield ("__fail__", "could not start `hermes acp`: %s" % e)
+        yield ("__fail__", "could not start `%s acp`: %s" % (bin_name, e))
         return
     errbuf = []
     threading.Thread(target=lambda: errbuf.append((proc.stderr.read() or "")[:500]) if proc.stderr else None, daemon=True).start()
@@ -2704,13 +2780,15 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=N
     def _proceed(sid):
         # Apply the picked model for this session, then prompt. set_model failures
         # are non-fatal — we still prompt (the agent uses its default brain).
-        if model_id:
+        # OpenClaw's ACP bridge has no session/set_model → go straight to prompt.
+        if model_id and not is_oc:
             st["setmodel"] = send("session/set_model", {"sessionId": sid, "modelId": model_id})
         else:
             st["prompt"] = _send_prompt(sid)
 
+    map_key = (kind + ":" + str(session_id)) if session_id else None
     amap = _acp_load_map()
-    acp_sid = amap.get(session_id) if session_id else None
+    acp_sid = amap.get(map_key) if map_key else None
     acp_holder[0] = acp_sid
     st = {}
     st["init"] = send("initialize", {"protocolVersion": 1, "clientCapabilities": {},
@@ -2808,9 +2886,9 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=N
                     acp_sid = (m.get("result") or {}).get("sessionId")
                     acp_holder[0] = acp_sid
                     if acp_sid:
-                        if session_id:
+                        if map_key:
                             with _acp_lock:
-                                a = _acp_load_map(); a[session_id] = acp_sid; _acp_save_map(a)
+                                a = _acp_load_map(); a[map_key] = acp_sid; _acp_save_map(a)
                         _proceed(acp_sid)
                     else:
                         yield ("__fail__", "session/new returned no sessionId" + ((" — " + (errbuf[0] if errbuf else "")) if errbuf else "")); return
@@ -2924,10 +3002,11 @@ def _hermes_chat_fallback(messages, session_id=None, model_id=None, images=None,
     yield ("done", {})
 
 
-def _openclaw_chat(messages, session_id=None, model=None, images=None):
-    """Run ONE OpenClaw agent turn via `openclaw agent --json` (tool-enabled, the
-    OpenClaw analog of Hermes ACP). Non-streaming — returns the final reply. Sessions
-    persist via --session-key. model is OpenClaw's `provider/model` key."""
+def _openclaw_chat(messages, session_id=None, model=None, images=None, env=None):
+    """NON-STREAM fallback for OpenClaw via `openclaw agent --json` — used only when
+    the ACP bridge yields nothing (e.g. no gateway). Returns the final reply text.
+    model is OpenClaw's `provider/model` key. `openclaw agent` has no image flag, so
+    attachments are dropped here (the ACP path handles images)."""
     oc = which("openclaw")
     user_text = _latest_user(messages)
     if not oc or not user_text:
@@ -2939,9 +3018,10 @@ def _openclaw_chat(messages, session_id=None, model=None, images=None):
         cmd += ["--model", model]
     if session_id:
         cmd += ["--session-key", "agentbay:" + str(session_id)]
-    for pth in (_attachment_paths(images) or []):
-        cmd += ["--file", pth]
-    env = _agent_env(); env["PYTHONUTF8"] = "1"; env["PYTHONIOENCODING"] = "utf-8"
+    penv = _agent_env(); penv["PYTHONUTF8"] = "1"; penv["PYTHONIOENCODING"] = "utf-8"
+    if env:
+        penv.update({k: v for k, v in env.items() if v})
+    env = penv
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=620, env=env,
                            errors="replace", cwd=str(Path.home()))
@@ -2964,14 +3044,29 @@ def _openclaw_chat(messages, session_id=None, model=None, images=None):
 
 
 def local_agent_stream(messages, session_id=None, model_id=None, images=None, env=None, kind="hermes"):
-    """Run the on-device agent. OpenClaw → `openclaw agent --json`. Hermes → ACP
-    (streams reply+thinking+tools); if ACP can't start (no output / handshake fail —
-    common on Windows when the acp extra isn't installed), fall back to the reliable
-    `hermes chat -q` path. The picked model is the agent's brain (set_model /
-    --provider+--model / openclaw --model); `env` carries the provider's saved key."""
+    """Run the on-device agent over ACP (streams reply+thinking+tools+plan+usage).
+    Hermes and OpenClaw both speak ACP (`hermes acp` / `openclaw acp --session …`).
+    If ACP yields nothing (no gateway / handshake fail — common on Windows), fall back
+    to the reliable one-shot path (`hermes chat -q` / `openclaw agent --json`)."""
     if kind == "openclaw":
-        for ev, payload in _openclaw_chat(messages, session_id, model_id, images):
+        emitted = 0
+        for ev, payload in acp_stream_turn(messages, session_id, model_id=model_id,
+                                           images=images, env=env, kind="openclaw"):
+            if ev == "__fail__":
+                break
+            if ev == "done":
+                if emitted == 0:
+                    break                          # nothing streamed → use one-shot fallback
+                yield ev, payload
+                return
+            if ev in ("token", "reasoning", "tool"):
+                emitted += 1
             yield ev, payload
+        if emitted == 0:
+            for ev, payload in _openclaw_chat(messages, session_id, model_id, images, env):
+                yield ev, payload
+        else:
+            yield ("done", {})
         return
     emitted = 0
     failed = None
@@ -3594,10 +3689,14 @@ class Handler(BaseHTTPRequestHandler):
                                     "available": _agent_kind(load_config()) == "hermes"})
         if path == "/api/agent/providers":
             return self._send(200, agent_providers_status())
+        if path == "/api/agent/active":
+            cfg = load_config()
+            return self._send(200, {"hermes": bool(which("hermes")), "openclaw": bool(which("openclaw")),
+                                    "pref": (cfg.get("agent") or ""), "active": _agent_kind(cfg)})
         if path == "/api/dashboard/agent":
             return self._send(200, agent_dashboard_stats())
         if path == "/api/agent/cron":
-            avail = _agent_kind(load_config()) == "hermes"
+            avail = _agent_kind(load_config()) in ("hermes", "openclaw")
             return self._send(200, {"available": bool(avail), "jobs": cron_jobs() if avail else []})
         if path == "/api/import/sessions":
             try:

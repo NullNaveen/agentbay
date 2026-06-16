@@ -1436,6 +1436,33 @@
   }
 
   // ---- Scheduled tasks: the agent's cron jobs (runs prompts on a timer) ----
+  // ---- Active agent: pick Hermes vs OpenClaw (only shown when both installed) ----
+  function AgentKindCard({ onToast }) {
+    const [st, setSt] = React.useState(null);   // {hermes, openclaw, pref, active}
+    const load = () => fetch("/api/agent/active").then((r) => r.json()).then(setSt).catch(() => {});
+    React.useEffect(() => { load(); }, []);
+    if (!st || !(st.hermes && st.openclaw)) return null;   // only a choice when BOTH are installed
+    const cur = st.pref || st.active;
+    const pick = (k) => {
+      fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agent: k }) })
+        .then((r) => r.json()).then(() => {
+          onToast && onToast({ type: "success", title: "Active agent: " + (k === "openclaw" ? "OpenClaw" : "Hermes") });
+          window.HermesData && window.HermesData.refreshModels && window.HermesData.refreshModels();
+          load();
+        }).catch(() => onToast && onToast({ type: "error", title: "Couldn't switch agent" }));
+    };
+    return (
+      <div style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 14, marginTop: 12 }}>
+        <div className="sec-title">Active agent</div>
+        <p style={{ fontSize: 12.5, color: "var(--text-3)", margin: "4px 0 10px" }}>Both Hermes and OpenClaw are installed. Pick which one powers your chats — your model picker switches to that agent's models.</p>
+        <div className="effort-seg">
+          <button className={"effort-opt" + (cur === "hermes" ? " on" : "")} onClick={() => pick("hermes")}>Hermes</button>
+          <button className={"effort-opt" + (cur === "openclaw" ? " on" : "")} onClick={() => pick("openclaw")}>OpenClaw</button>
+        </div>
+      </div>
+    );
+  }
+
   function CronCard({ onToast }) {
     const [data, setData] = React.useState(null);   // {available, jobs}
     const [form, setForm] = React.useState({ name: "", schedule: "", prompt: "" });
@@ -1503,6 +1530,7 @@
       <div>
         <h3 style={{ marginBottom: 6 }}>Agent</h3>
         <AgentStatus onToast={onToast} />
+        <AgentKindCard onToast={onToast} />
         <p style={{ fontSize: 13, color: "var(--text-3)", marginTop: 14 }}>Install, detect, and keep your local agent runtime up to date. AgentBay fetches the latest from GitHub for your OS.</p>
         {agents.map((a) => {
           const u = upd[a.agent] || {};
