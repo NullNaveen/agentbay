@@ -163,14 +163,19 @@ The quiet switches, and what they're set to out of the box:
 
 ## Using other agents
 
-AgentBay speaks to **Hermes** over ACP (its native protocol) and can also drive
-**OpenClaw** through its CLI. Detection is automatic — Hermes first, then
-OpenClaw. Models from either appear in the picker; chats route through whichever
-agent is active.
+AgentBay speaks **ACP** (the agent protocol) to both **Hermes** (`hermes acp`)
+and **OpenClaw** (`openclaw acp`). That means OpenClaw streams exactly like
+Hermes — live reply, the agent's thinking, rich tool cards, real Stop, context
+usage — not a one-shot reply.
 
-> Only the Hermes path is well-tested today. OpenClaw works in our setup but
-> hasn't been hammered on — if something breaks for you,
-> [open an issue](https://github.com/NullNaveen/agentbay/issues) and it gets fixed.
+When both are installed, a **Settings → Agent → Active agent** switch picks
+which one powers your chats; the model picker, brand glyph (Hermes caduceus vs
+the OpenClaw crab), and even the *thinking animation* change to match. The
+**Scheduled tasks** panel is agent-aware too — it reads/writes whichever agent's
+cron jobs.
+
+> Hermes and OpenClaw are both tested. A *different* agent isn't — if something
+> breaks, [open an issue](https://github.com/NullNaveen/agentbay/issues).
 
 ## Troubleshooting
 

@@ -417,6 +417,183 @@
       strokeLinecap: "round"
     })]);
   }
+
+  // ---- per-agent brand glyphs (each has its own cute thinking animation) ----
+  // OpenClaw: a round crab that snips its pincers + floats bubbles while thinking.
+  function OpenClawGlyph(p) {
+    const size = p && p.size || 40,
+      anim = p && p.flap;
+    return /*#__PURE__*/React.createElement("svg", {
+      width: size,
+      height: size,
+      viewBox: "0 0 24 24",
+      className: "ag-glyph ag-oc" + (anim ? " anim" : ""),
+      style: p && p.style,
+      "aria-hidden": "true"
+    }, /*#__PURE__*/React.createElement("g", {
+      className: "oc-bubbles",
+      fill: "var(--accent, currentColor)"
+    }, /*#__PURE__*/React.createElement("circle", {
+      className: "oc-b oc-b1",
+      cx: "12",
+      cy: "6",
+      r: "1.05"
+    }), /*#__PURE__*/React.createElement("circle", {
+      className: "oc-b oc-b2",
+      cx: "14.4",
+      cy: "6",
+      r: "0.8"
+    }), /*#__PURE__*/React.createElement("circle", {
+      className: "oc-b oc-b3",
+      cx: "9.7",
+      cy: "6",
+      r: "0.65"
+    })), /*#__PURE__*/React.createElement("g", {
+      fill: "currentColor"
+    }, /*#__PURE__*/React.createElement("g", {
+      className: "oc-stalks"
+    }, /*#__PURE__*/React.createElement("rect", {
+      x: "9.05",
+      y: "9.1",
+      width: "1.5",
+      height: "3",
+      rx: "0.75"
+    }), /*#__PURE__*/React.createElement("rect", {
+      x: "13.45",
+      y: "9.1",
+      width: "1.5",
+      height: "3",
+      rx: "0.75"
+    }), /*#__PURE__*/React.createElement("circle", {
+      cx: "9.8",
+      cy: "8.7",
+      r: "1.35"
+    }), /*#__PURE__*/React.createElement("circle", {
+      cx: "14.2",
+      cy: "8.7",
+      r: "1.35"
+    })), /*#__PURE__*/React.createElement("path", {
+      d: "M5 16.2c0-3.6 3.1-6 7-6s7 2.4 7 6c0 1.9-1.5 3.4-3.4 3.4H8.4C6.5 19.6 5 18.1 5 16.2Z"
+    }), /*#__PURE__*/React.createElement("g", null, /*#__PURE__*/React.createElement("rect", {
+      x: "5.2",
+      y: "17.8",
+      width: "2.6",
+      height: "1.2",
+      rx: "0.6",
+      transform: "rotate(20 6.5 18.4)"
+    }), /*#__PURE__*/React.createElement("rect", {
+      x: "16.2",
+      y: "17.8",
+      width: "2.6",
+      height: "1.2",
+      rx: "0.6",
+      transform: "rotate(-20 17.5 18.4)"
+    })), /*#__PURE__*/React.createElement("g", {
+      className: "oc-claw oc-clawL",
+      transform: "translate(5.4 13.8)"
+    }, /*#__PURE__*/React.createElement("rect", {
+      x: "-0.6",
+      y: "0",
+      width: "1.3",
+      height: "3.4",
+      rx: "0.65",
+      transform: "rotate(30 0 0)"
+    }), /*#__PURE__*/React.createElement("g", {
+      className: "oc-pincer"
+    }, /*#__PURE__*/React.createElement("path", {
+      d: "M-1.6 -2.2c-1.7-0.5-3 0.1-3.3 1.3 1 0.2 2.1 0.1 3.3-0.4Z"
+    }), /*#__PURE__*/React.createElement("path", {
+      d: "M-1.4 -1c-1.7 0.3-3 1.2-3 2.4 1 -0.1 2-0.6 3-1.5Z"
+    }))), /*#__PURE__*/React.createElement("g", {
+      className: "oc-claw oc-clawR",
+      transform: "translate(18.6 13.8)"
+    }, /*#__PURE__*/React.createElement("rect", {
+      x: "-0.7",
+      y: "0",
+      width: "1.3",
+      height: "3.4",
+      rx: "0.65",
+      transform: "rotate(-30 0 0)"
+    }), /*#__PURE__*/React.createElement("g", {
+      className: "oc-pincer"
+    }, /*#__PURE__*/React.createElement("path", {
+      d: "M1.6 -2.2c1.7-0.5 3 0.1 3.3 1.3-1 0.2-2.1 0.1-3.3-0.4Z"
+    }), /*#__PURE__*/React.createElement("path", {
+      d: "M1.4 -1c1.7 0.3 3 1.2 3 2.4-1-0.1-2-0.6-3-1.5Z"
+    })))), /*#__PURE__*/React.createElement("circle", {
+      cx: "12",
+      cy: "15.6",
+      r: "1.15",
+      fill: "var(--accent, currentColor)",
+      opacity: "0.55"
+    }));
+  }
+
+  // Generic / other agents: a sparkle that pulses while three idea-dots orbit it.
+  function GenericGlyph(p) {
+    const size = p && p.size || 40,
+      anim = p && p.flap;
+    return /*#__PURE__*/React.createElement("svg", {
+      width: size,
+      height: size,
+      viewBox: "0 0 24 24",
+      fill: "none",
+      className: "ag-glyph ag-gen" + (anim ? " anim" : ""),
+      style: p && p.style,
+      "aria-hidden": "true"
+    }, /*#__PURE__*/React.createElement("circle", {
+      className: "gen-ring",
+      cx: "12",
+      cy: "12",
+      r: "8",
+      fill: "none",
+      stroke: "currentColor",
+      strokeWidth: "1",
+      strokeOpacity: "0.3",
+      strokeDasharray: "1.6 2.4",
+      strokeLinecap: "round"
+    }), /*#__PURE__*/React.createElement("g", {
+      className: "gen-orbit"
+    }, /*#__PURE__*/React.createElement("circle", {
+      className: "gen-dot gen-d1",
+      cx: "12",
+      cy: "4",
+      r: "1.15",
+      fill: "currentColor"
+    }), /*#__PURE__*/React.createElement("circle", {
+      className: "gen-dot gen-d2",
+      cx: "18.93",
+      cy: "16",
+      r: "1.15",
+      fill: "currentColor"
+    }), /*#__PURE__*/React.createElement("circle", {
+      className: "gen-dot gen-d3",
+      cx: "5.07",
+      cy: "16",
+      r: "1.15",
+      fill: "currentColor"
+    })), /*#__PURE__*/React.createElement("g", {
+      className: "gen-spark"
+    }, /*#__PURE__*/React.createElement("path", {
+      d: "M12 6.5 C12.55 10.3 13.7 11.45 17.5 12 C13.7 12.55 12.55 13.7 12 17.5 C11.45 13.7 10.3 12.55 6.5 12 C10.3 11.45 11.45 10.3 12 6.5 Z",
+      fill: "var(--accent, currentColor)"
+    })));
+  }
+
+  // Pick the glyph for the active agent (kind prop, else the live global).
+  function AgentGlyph(p) {
+    const kind = p && p.kind || typeof window !== "undefined" && window.__agentKind || "hermes";
+    if (kind === "openclaw") return /*#__PURE__*/React.createElement(OpenClawGlyph, p);
+    if (kind && kind !== "hermes") return /*#__PURE__*/React.createElement(GenericGlyph, p);
+    return /*#__PURE__*/React.createElement(HermesGlyph, p);
+  }
+  function agentBrandName(kind) {
+    return kind === "openclaw" ? "OpenClaw" : kind && kind !== "hermes" ? "AgentBay" : "Hermes";
+  }
+  window.OpenClawGlyph = OpenClawGlyph;
+  window.GenericGlyph = GenericGlyph;
+  window.AgentGlyph = AgentGlyph;
+  window.agentBrandName = agentBrandName;
   function Mascot(p) {
     const label = p && p.label || "Thinking";
     return React.createElement("span", {
@@ -1094,6 +1271,7 @@
       showSkills,
       onOpenDashboard,
       showDashboard,
+      agentKind,
       onNewFolder,
       onChatMenu,
       onToggleCollapse,
@@ -1135,11 +1313,12 @@
       className: "sb-top"
     }, /*#__PURE__*/React.createElement("div", {
       className: "sb-wordmark"
-    }, /*#__PURE__*/React.createElement(window.HermesGlyph, {
+    }, /*#__PURE__*/React.createElement(window.AgentGlyph, {
+      kind: agentKind,
       size: 26
     }), !collapsed && /*#__PURE__*/React.createElement("span", {
       className: "sb-wordmark-text"
-    }, "Hermes")), /*#__PURE__*/React.createElement("button", {
+    }, window.agentBrandName ? window.agentBrandName(agentKind) : "Hermes")), /*#__PURE__*/React.createElement("button", {
       className: "sb-iconbtn",
       "aria-label": "Toggle sidebar",
       onClick: onToggleCollapse
@@ -1495,7 +1674,7 @@
       className: "assistant-head"
     }, avatars !== false && /*#__PURE__*/React.createElement("span", {
       className: "am-icon"
-    }, /*#__PURE__*/React.createElement(window.HermesGlyph, {
+    }, /*#__PURE__*/React.createElement(window.AgentGlyph, {
       size: 17,
       flap: streaming && !msg.content
     })), /*#__PURE__*/React.createElement("span", {
@@ -2001,7 +2180,7 @@
       ref: taRef,
       rows: 1,
       value: value,
-      placeholder: placeholder || "Message Hermes…",
+      placeholder: placeholder || "Message your agent…",
       onChange: e => onChange(e.target.value),
       onKeyDown: onKey,
       onPaste: onPaste,
@@ -2044,7 +2223,7 @@
       sw: 2.4
     }))))), /*#__PURE__*/React.createElement("div", {
       className: "disclaimer"
-    }, "Hermes can make mistakes. Verify important info.")));
+    }, "The agent can make mistakes. Verify important info.")));
   }
 
   /* ---------- Empty home (S2) ---------- */
@@ -3111,6 +3290,7 @@
           type: "success",
           title: "Active agent: " + (k === "openclaw" ? "OpenClaw" : "Hermes")
         });
+        window.__setAgentKind && window.__setAgentKind(k); // live-update the brand glyph + name
         window.HermesData && window.HermesData.refreshModels && window.HermesData.refreshModels();
         load();
       }).catch(() => onToast && onToast({
@@ -4128,7 +4308,7 @@
         textAlign: "center",
         paddingTop: 24
       }
-    }, /*#__PURE__*/React.createElement(window.HermesGlyph, {
+    }, /*#__PURE__*/React.createElement(window.AgentGlyph, {
       size: 56
     }), /*#__PURE__*/React.createElement("div", {
       style: {
@@ -4136,7 +4316,7 @@
         fontSize: 20,
         marginTop: 14
       }
-    }, "Hermes \u2014 Simple Chat"), /*#__PURE__*/React.createElement("div", {
+    }, "AgentBay \u2014 a minimal home for your agent"), /*#__PURE__*/React.createElement("div", {
       style: {
         color: "var(--text-3)",
         marginTop: 4
@@ -8698,6 +8878,16 @@ Object.assign(window, {
     const [settings, setSettings] = useLocal("hermes_settings", DEFAULT_SETTINGS);
     const [sessions, setSessions] = useLocal("ab_sessions", []);
     const [activeId, setActiveId] = useState(null);
+    // which on-device agent is active (drives the brand glyph + name + thinking animation)
+    const [agentKind, setAgentKindState] = useState(null);
+    const setAgentKind = k => {
+      window.__agentKind = k || "hermes";
+      setAgentKindState(k || "hermes");
+    };
+    useEffect(() => {
+      window.__setAgentKind = setAgentKind; // AgentKindCard (separate IIFE) calls this on switch
+      fetch("/api/agent/active").then(r => r.json()).then(d => setAgentKind(d.active || "hermes")).catch(() => {});
+    }, []);
 
     // ---- server-side chat sync: every browser/device on this account shares chats.
     // The store lives with the AgentBay instance; we merge by id (newest `updated`
@@ -9760,7 +9950,7 @@ Object.assign(window, {
       onRemoveAttach: i => setAttachments(x => x.filter((_, j) => j !== i)),
       focusKey,
       commands: slashCommands,
-      placeholder: active ? "Reply to Hermes…" : "Message Hermes…"
+      placeholder: (active ? "Reply to " : "Message ") + (window.agentBrandName ? window.agentBrandName(agentKind) : "Hermes") + "…"
     };
 
     /* ---- export ---- */
@@ -9857,6 +10047,7 @@ Object.assign(window, {
       groupOrder: D.GROUP_ORDER,
       user: user,
       theme: theme,
+      agentKind: agentKind,
       onNewChat: newChat,
       onOpenChat: openChat,
       onOpenSearch: () => setModal({

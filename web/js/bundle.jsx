@@ -145,6 +145,82 @@
     ]);
   }
 
+  // ---- per-agent brand glyphs (each has its own cute thinking animation) ----
+  // OpenClaw: a round crab that snips its pincers + floats bubbles while thinking.
+  function OpenClawGlyph(p) {
+    const size = (p && p.size) || 40, anim = p && p.flap;
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" className={"ag-glyph ag-oc" + (anim ? " anim" : "")} style={p && p.style} aria-hidden="true">
+        <g className="oc-bubbles" fill="var(--accent, currentColor)">
+          <circle className="oc-b oc-b1" cx="12" cy="6" r="1.05" />
+          <circle className="oc-b oc-b2" cx="14.4" cy="6" r="0.8" />
+          <circle className="oc-b oc-b3" cx="9.7" cy="6" r="0.65" />
+        </g>
+        <g fill="currentColor">
+          <g className="oc-stalks">
+            <rect x="9.05" y="9.1" width="1.5" height="3" rx="0.75" />
+            <rect x="13.45" y="9.1" width="1.5" height="3" rx="0.75" />
+            <circle cx="9.8" cy="8.7" r="1.35" />
+            <circle cx="14.2" cy="8.7" r="1.35" />
+          </g>
+          <path d="M5 16.2c0-3.6 3.1-6 7-6s7 2.4 7 6c0 1.9-1.5 3.4-3.4 3.4H8.4C6.5 19.6 5 18.1 5 16.2Z" />
+          <g>
+            <rect x="5.2" y="17.8" width="2.6" height="1.2" rx="0.6" transform="rotate(20 6.5 18.4)" />
+            <rect x="16.2" y="17.8" width="2.6" height="1.2" rx="0.6" transform="rotate(-20 17.5 18.4)" />
+          </g>
+          <g className="oc-claw oc-clawL" transform="translate(5.4 13.8)">
+            <rect x="-0.6" y="0" width="1.3" height="3.4" rx="0.65" transform="rotate(30 0 0)" />
+            <g className="oc-pincer">
+              <path d="M-1.6 -2.2c-1.7-0.5-3 0.1-3.3 1.3 1 0.2 2.1 0.1 3.3-0.4Z" />
+              <path d="M-1.4 -1c-1.7 0.3-3 1.2-3 2.4 1 -0.1 2-0.6 3-1.5Z" />
+            </g>
+          </g>
+          <g className="oc-claw oc-clawR" transform="translate(18.6 13.8)">
+            <rect x="-0.7" y="0" width="1.3" height="3.4" rx="0.65" transform="rotate(-30 0 0)" />
+            <g className="oc-pincer">
+              <path d="M1.6 -2.2c1.7-0.5 3 0.1 3.3 1.3-1 0.2-2.1 0.1-3.3-0.4Z" />
+              <path d="M1.4 -1c1.7 0.3 3 1.2 3 2.4-1-0.1-2-0.6-3-1.5Z" />
+            </g>
+          </g>
+        </g>
+        <circle cx="12" cy="15.6" r="1.15" fill="var(--accent, currentColor)" opacity="0.55" />
+      </svg>
+    );
+  }
+
+  // Generic / other agents: a sparkle that pulses while three idea-dots orbit it.
+  function GenericGlyph(p) {
+    const size = (p && p.size) || 40, anim = p && p.flap;
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={"ag-glyph ag-gen" + (anim ? " anim" : "")} style={p && p.style} aria-hidden="true">
+        <circle className="gen-ring" cx="12" cy="12" r="8" fill="none" stroke="currentColor" strokeWidth="1" strokeOpacity="0.3" strokeDasharray="1.6 2.4" strokeLinecap="round" />
+        <g className="gen-orbit">
+          <circle className="gen-dot gen-d1" cx="12" cy="4" r="1.15" fill="currentColor" />
+          <circle className="gen-dot gen-d2" cx="18.93" cy="16" r="1.15" fill="currentColor" />
+          <circle className="gen-dot gen-d3" cx="5.07" cy="16" r="1.15" fill="currentColor" />
+        </g>
+        <g className="gen-spark">
+          <path d="M12 6.5 C12.55 10.3 13.7 11.45 17.5 12 C13.7 12.55 12.55 13.7 12 17.5 C11.45 13.7 10.3 12.55 6.5 12 C10.3 11.45 11.45 10.3 12 6.5 Z" fill="var(--accent, currentColor)" />
+        </g>
+      </svg>
+    );
+  }
+
+  // Pick the glyph for the active agent (kind prop, else the live global).
+  function AgentGlyph(p) {
+    const kind = (p && p.kind) || (typeof window !== "undefined" && window.__agentKind) || "hermes";
+    if (kind === "openclaw") return <OpenClawGlyph {...p} />;
+    if (kind && kind !== "hermes") return <GenericGlyph {...p} />;
+    return <HermesGlyph {...p} />;
+  }
+  function agentBrandName(kind) {
+    return kind === "openclaw" ? "OpenClaw" : (kind && kind !== "hermes" ? "AgentBay" : "Hermes");
+  }
+  window.OpenClawGlyph = OpenClawGlyph;
+  window.GenericGlyph = GenericGlyph;
+  window.AgentGlyph = AgentGlyph;
+  window.agentBrandName = agentBrandName;
+
   function Mascot(p) {
     const label = (p && p.label) || "Thinking";
     return React.createElement("span", { className: "mascot" }, [
@@ -542,7 +618,7 @@
     const {
       collapsed, mobileOpen, sessions, activeId, folders,
       onNewChat, onOpenChat, onOpenSearch, onOpenNotes, onOpenProjects, onOpenAgents, showAgents, onOpenSkills, showSkills,
-      onOpenDashboard, showDashboard,
+      onOpenDashboard, showDashboard, agentKind,
       onNewFolder, onChatMenu, onToggleCollapse, user, onUserClick, onResize,
       groupOrder, theme,
     } = props;
@@ -569,8 +645,8 @@
       <aside className={"sidebar" + (collapsed ? " collapsed" : "") + (mobileOpen ? " mobile-open" : "")}>
         <div className="sb-top">
           <div className="sb-wordmark">
-            <window.HermesGlyph size={26} />
-            {!collapsed && <span className="sb-wordmark-text">Hermes</span>}
+            <window.AgentGlyph kind={agentKind} size={26} />
+            {!collapsed && <span className="sb-wordmark-text">{window.agentBrandName ? window.agentBrandName(agentKind) : "Hermes"}</span>}
           </div>
           <button className="sb-iconbtn" aria-label="Toggle sidebar" onClick={onToggleCollapse}>
             <I.PanelLeft size={18} />
@@ -743,7 +819,7 @@
     return (
       <div className="turn assistant anim-fadeup">
         <div className="assistant-head">
-          {avatars !== false && <span className="am-icon"><window.HermesGlyph size={17} flap={streaming && !msg.content} /></span>}
+          {avatars !== false && <span className="am-icon"><window.AgentGlyph size={17} flap={streaming && !msg.content} /></span>}
           <span className="am-name">{meta.name}</span>
           {streaming && !msg.content && <span className="am-thinking shimmer-text">Thinking…</span>}
           {showTimestamps && msg.ts && <span className="ts">{msg.ts}</span>}
@@ -1033,7 +1109,7 @@
                 ))}
               </div>
             )}
-            <textarea ref={taRef} rows={1} value={value} placeholder={placeholder || "Message Hermes…"}
+            <textarea ref={taRef} rows={1} value={value} placeholder={placeholder || "Message your agent…"}
               onChange={(e) => onChange(e.target.value)} onKeyDown={onKey} onPaste={onPaste}
               onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} aria-label="Message" />
 
@@ -1063,7 +1139,7 @@
               </div>
             </div>
           </div>
-          <div className="disclaimer">Hermes can make mistakes. Verify important info.</div>
+          <div className="disclaimer">The agent can make mistakes. Verify important info.</div>
         </div>
       </div>
     );
@@ -1447,6 +1523,7 @@
       fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agent: k }) })
         .then((r) => r.json()).then(() => {
           onToast && onToast({ type: "success", title: "Active agent: " + (k === "openclaw" ? "OpenClaw" : "Hermes") });
+          window.__setAgentKind && window.__setAgentKind(k);   // live-update the brand glyph + name
           window.HermesData && window.HermesData.refreshModels && window.HermesData.refreshModels();
           load();
         }).catch(() => onToast && onToast({ type: "error", title: "Couldn't switch agent" }));
@@ -1842,8 +1919,8 @@
     };
     return (
       <div style={{ textAlign: "center", paddingTop: 24 }}>
-        <window.HermesGlyph size={56} />
-        <div style={{ fontWeight: 700, fontSize: 20, marginTop: 14 }}>Hermes — Simple Chat</div>
+        <window.AgentGlyph size={56} />
+        <div style={{ fontWeight: 700, fontSize: 20, marginTop: 14 }}>AgentBay — a minimal home for your agent</div>
         <div style={{ color: "var(--text-3)", marginTop: 4 }}>Version {v ? v.current : "…"} · MIT License</div>
         {v && v.update_available ? (
           <div style={{ marginTop: 18 }}>
@@ -4019,6 +4096,13 @@ Object.assign(window, {
     const [settings, setSettings] = useLocal("hermes_settings", DEFAULT_SETTINGS);
     const [sessions, setSessions] = useLocal("ab_sessions", []);
     const [activeId, setActiveId] = useState(null);
+    // which on-device agent is active (drives the brand glyph + name + thinking animation)
+    const [agentKind, setAgentKindState] = useState(null);
+    const setAgentKind = (k) => { window.__agentKind = k || "hermes"; setAgentKindState(k || "hermes"); };
+    useEffect(() => {
+      window.__setAgentKind = setAgentKind;   // AgentKindCard (separate IIFE) calls this on switch
+      fetch("/api/agent/active").then((r) => r.json()).then((d) => setAgentKind(d.active || "hermes")).catch(() => {});
+    }, []);
 
     // ---- server-side chat sync: every browser/device on this account shares chats.
     // The store lives with the AgentBay instance; we merge by id (newest `updated`
@@ -4604,7 +4688,7 @@ Object.assign(window, {
       value: draft, onChange: setDraft, onSend: () => send(), onStop: stopStream, streaming: !!streaming,
       attachments, onAttach: attachFile, onFiles: onFilesPicked, onRemoveAttach: (i) => setAttachments((x) => x.filter((_, j) => j !== i)),
       focusKey, commands: slashCommands,
-      placeholder: active ? "Reply to Hermes…" : "Message Hermes…",
+      placeholder: (active ? "Reply to " : "Message ") + (window.agentBrandName ? window.agentBrandName(agentKind) : "Hermes") + "…",
     };
 
     /* ---- export ---- */
@@ -4653,7 +4737,7 @@ Object.assign(window, {
         {mobileOpen && <div className="mobile-backdrop" onClick={() => setMobileOpen(false)} />}
         <window.Sidebar
           collapsed={collapsed} mobileOpen={mobileOpen} sessions={sessions} activeId={activeId}
-          folders={folders} groupOrder={D.GROUP_ORDER} user={user} theme={theme}
+          folders={folders} groupOrder={D.GROUP_ORDER} user={user} theme={theme} agentKind={agentKind}
           onNewChat={newChat} onOpenChat={openChat} onOpenSearch={() => setModal({ kind: "search" })}
           onOpenNotes={() => setModal({ kind: "notes" })}
           onOpenDashboard={() => setModal({ kind: "dashboard" })} showDashboard={settings.dashboard === true}

@@ -19,9 +19,9 @@ AgentBay was created with two things in mind:
 
 So I built the missing middle: **one minimal UI that even non-tech users can handle.** Your mom could install it. Your teammate who's never opened a terminal can chat with a real agent — one that runs commands, reads files, and browses the web — from a page that looks as friendly as any chat app.
 
-It's built first as a **minimal UI for the Hermes agent**, and it also works with other agents like **OpenClaw**.
+It's built first as a **minimal UI for the Hermes agent** — and now **OpenClaw** too. Both stream live through AgentBay (replies, the agent's thinking, its tool calls, real Stop), each with its own brand and a cute thinking animation. Pick whichever you like under Settings → Agent.
 
-> **Honest note:** testing has only been done with Hermes so far. With any other agent you may face issues — if you do, or if you need a feature, [just let me know](https://github.com/NullNaveen/agentbay/issues). I read everything.
+> **Honest note:** Hermes and OpenClaw are both tested. Any *other* agent is best-effort — you may hit issues. If you do, or if you need a feature, [just let me know](https://github.com/NullNaveen/agentbay/issues). I read everything.
 
 ## Install
 
