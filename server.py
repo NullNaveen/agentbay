@@ -3225,6 +3225,174 @@ def _agent_route(cfg, data):
     return (True, model_id, images, env, "hermes")
 
 
+# ============================================================================
+# EXPERIMENTAL — two agents together. Two modes, both OFF by default and only
+# offered when BOTH Hermes and OpenClaw are installed (never on multi-user EC2):
+#   compare    — same prompt, both agents answer in parallel, side by side.
+#   collaborate— the agents work ONE task together, taking turns (one "has the
+#                keyboard" at a time → FS-safe), handing off to each other with a
+#                visible inter-agent conversation, until DONE / round-limit / Stop.
+# Grounded in human pair-work: a shared plan, turn-taking, explicit handoffs.
+# ============================================================================
+_AGENT_NAMES = {"hermes": "Hermes", "openclaw": "OpenClaw"}
+
+
+def _available_agent_kinds():
+    """Installable agents present on this machine. Collaboration needs >=2."""
+    if _is_multiuser_ec2():
+        return []                       # EC2 uses the gateway; no local agents
+    return [k for k, ok in (("hermes", which("hermes")), ("openclaw", which("openclaw"))) if ok]
+
+
+def _collab_available(cfg=None):
+    return len(_available_agent_kinds()) >= 2
+
+
+def collab_status(cfg=None):
+    cfg = cfg if cfg is not None else load_config()
+    kinds = _available_agent_kinds()
+    order = [k for k in (cfg.get("collab_order") or ["hermes", "openclaw"]) if k in kinds] or kinds
+    return {
+        "available": len(kinds) >= 2,
+        "kinds": kinds,
+        "names": {k: _AGENT_NAMES.get(k, k) for k in kinds},
+        "compare_enabled": bool(cfg.get("compare_enabled")),
+        "collab_enabled": bool(cfg.get("collab_enabled")),
+        "max_rounds": int(cfg.get("collab_max_rounds") or 8),
+        "order": order[:2],
+    }
+
+
+# ---- Mode 2 state (collaborate). One live run per collab_id so a separate
+# /api/collab/cancel request can reach it. Turns are SERIALIZED — the coordinator
+# runs one agent's ACP turn to completion before starting the other's, so only one
+# agent ever touches the filesystem at a time ("one keyboard"). ----
+_collab_runs = {}
+_collab_lock = threading.Lock()
+
+_COLLAB_ROLE = {
+    "lead": ("You go FIRST. Propose a SHORT plan (2–5 concrete steps) for the whole task, "
+             "then start on the first step using your tools. Be explicit about what you did "
+             "and which file(s) you touched. End by handing off to your partner."),
+    "partner": ("Read what your partner just did, then REVIEW it and CONTINUE the work — fix "
+                "or improve it if needed, otherwise advance the next step. Don't redo work "
+                "that's already correct. Say which file(s) you touched. End with a clear handoff."),
+}
+
+
+def _collab_prompt(state, agent, role, rnd):
+    me, partner = _AGENT_NAMES.get(agent, agent), None
+    for k in state["order"]:
+        if k != agent:
+            partner = _AGENT_NAMES.get(k, k)
+    last = ""
+    for t in reversed(state["transcript"]):
+        if t["agent"] != agent and t.get("text"):
+            last = t["text"]; break
+    return (
+        "COLLABORATION — round %d of %d.\n" % (rnd, state["max_rounds"]) +
+        "You are **%s**, working WITH another AI agent (**%s**) on ONE shared task. "
+        "Only ONE of you works at a time; it's YOUR turn now and your partner is paused.\n\n"
+        % (me, partner or "your partner") +
+        "Shared goal:\n%s\n\n" % state["goal"] +
+        (("Your partner's latest message:\n«%s»\n\n" % last[:4000]) if last else "") +
+        _COLLAB_ROLE.get(role, _COLLAB_ROLE["partner"]) + "\n\n"
+        "Rules:\n"
+        "- Do REAL work this turn with your tools — don't just talk.\n"
+        "- Only edit files you announce in your message.\n"
+        "- Keep it focused and hand off clearly at the end.\n"
+        "- If — and ONLY if — the whole task is fully complete and verified, end your "
+        "message with the word DONE on its own line."
+    )
+
+
+def collab_run(collab_id):
+    """Generator: drives the round-robin collaboration, yielding (event, payload)
+    tuples. payload always carries at least {agent}; token/reasoning/tool/plan/usage
+    also carry {data}. Serialized turns = FS-safe by construction."""
+    with _collab_lock:
+        state = _collab_runs.get(collab_id)
+    if not state:
+        yield ("error", {"data": "collaboration not found"}); return
+    order, mx = state["order"], state["max_rounds"]
+    last_norm = {}
+    for rnd in range(1, mx + 1):
+        if state["status"] != "running":
+            break
+        agent = order[(rnd - 1) % len(order)]
+        role = "lead" if rnd == 1 else "partner"
+        state["round"] = rnd; state["lock_holder"] = agent
+        nm = _AGENT_NAMES.get(agent, agent)
+        yield ("turn_start", {"agent": agent, "name": nm, "role": role, "round": rnd})
+        prompt = _collab_prompt(state, agent, role, rnd)
+        sid = "collab:%s:%s" % (collab_id, agent)
+        buf, saw_tool = [], [False]
+        try:
+            stream = acp_stream_turn([{"role": "user", "content": prompt}], session_id=sid,
+                                     model_id=None, env={}, kind=agent)
+            for ev, payload in stream:
+                if ev == "__fail__":
+                    fb = (_openclaw_chat if agent == "openclaw" else _hermes_chat_fallback)(
+                        [{"role": "user", "content": prompt}], sid)
+                    for ev2, p2 in fb:
+                        if ev2 == "token":
+                            buf.append(p2); yield ("token", {"agent": agent, "data": p2})
+                        elif ev2 == "reasoning":
+                            yield ("reasoning", {"agent": agent, "data": p2})
+                        elif ev2 == "tool":
+                            saw_tool[0] = True; yield ("tool", {"agent": agent, "data": p2})
+                    break
+                if ev == "done":
+                    break
+                if ev == "token":
+                    buf.append(payload); yield ("token", {"agent": agent, "data": payload})
+                elif ev == "reasoning":
+                    yield ("reasoning", {"agent": agent, "data": payload})
+                elif ev == "tool":
+                    saw_tool[0] = True; yield ("tool", {"agent": agent, "data": payload})
+                elif ev == "plan":
+                    state["plan"] = payload; yield ("plan", {"agent": agent, "data": payload})
+                elif ev == "usage":
+                    yield ("usage", {"agent": agent, "data": payload})
+                elif ev == "error":
+                    yield ("error", {"agent": agent, "data": payload})
+                if state["status"] != "running":
+                    break
+        except Exception as e:
+            yield ("error", {"agent": agent, "data": str(e)[:300]})
+        msg = _ANSI_RE.sub("", "".join(buf)).strip()
+        state["transcript"].append({"agent": agent, "role": role, "round": rnd, "text": msg})
+        yield ("handoff", {"agent": agent, "name": nm, "round": rnd, "text": msg})
+        if state["status"] != "running":
+            break
+        # ---- stop conditions (definition of done) + runaway guards ----
+        if rnd >= 2 and re.search(r"(?im)^\s*done\b", msg) and len(msg) < 6000:
+            state["status"] = "done"; state["done_reason"] = "consensus"
+            yield ("collab_done", {"reason": "consensus", "round": rnd}); return
+        norm = re.sub(r"\s+", " ", msg.lower()).strip()
+        if norm and last_norm.get(agent) == norm and not saw_tool[0]:
+            state["status"] = "done"; state["done_reason"] = "repetition"
+            yield ("collab_done", {"reason": "repetition", "round": rnd}); return
+        last_norm[agent] = norm
+    if state["status"] == "stopped":
+        yield ("collab_done", {"reason": "user_stop", "round": state.get("round")})
+    elif state["status"] == "running":
+        state["status"] = "done"; state["done_reason"] = "max_rounds"
+        yield ("collab_done", {"reason": "max_rounds", "round": state.get("round")})
+
+
+def _cancel_collab(collab_id):
+    with _collab_lock:
+        st = _collab_runs.get(collab_id)
+    if not st:
+        return False
+    st["status"] = "stopped"
+    holder = st.get("lock_holder")
+    if holder:
+        _cancel_turn("collab:%s:%s" % (collab_id, holder))
+    return True
+
+
 def _acp_probe(hb, timeout=15):
     """Spawn `hermes acp` and do a single initialize handshake. Returns (ok, detail)
     so we can tell WHY the local agent isn't working on a given machine."""
@@ -3786,6 +3954,8 @@ class Handler(BaseHTTPRequestHandler):
             cfg = load_config()
             return self._send(200, {"hermes": bool(which("hermes")), "openclaw": bool(which("openclaw")),
                                     "pref": (cfg.get("agent") or ""), "active": _agent_kind(cfg)})
+        if path == "/api/collab/status":
+            return self._send(200, collab_status(load_config()))
         if path == "/api/dashboard/agent":
             return self._send(200, agent_dashboard_stats())
         if path == "/api/agent/cron":
@@ -3851,6 +4021,18 @@ class Handler(BaseHTTPRequestHandler):
                 updates["agent"] = data["agent"]
             if "agent_profile" in data:
                 updates["agent_profile"] = data["agent_profile"] or ""   # which Hermes profile/agent to chat with
+            # experimental: two-agents-together toggles (gated to >=2 agents installed)
+            if "compare_enabled" in data:
+                updates["compare_enabled"] = bool(data["compare_enabled"])
+            if "collab_enabled" in data:
+                updates["collab_enabled"] = bool(data["collab_enabled"])
+            if "collab_max_rounds" in data:
+                try:
+                    updates["collab_max_rounds"] = max(2, min(16, int(data["collab_max_rounds"])))
+                except Exception:
+                    pass
+            if isinstance(data.get("collab_order"), list):
+                updates["collab_order"] = [k for k in data["collab_order"] if k in ("hermes", "openclaw")]
             if "provider" in data and data["provider"] in PROVIDERS:
                 updates["provider"] = data["provider"]
             if "active_model" in data:
@@ -4036,6 +4218,97 @@ class Handler(BaseHTTPRequestHandler):
             # Real Stop — cancel the in-flight agent turn for this session.
             stopped = _cancel_turn(data.get("session_id"))
             return self._send(200, {"stopped": bool(stopped)})
+        if path == "/api/compare/stream":
+            # EXPERIMENTAL Mode 1 — both agents answer the SAME prompt in parallel,
+            # one SSE stream where every event carries {agent}. Two threads share the
+            # wfile under a lock. Each agent keeps its own ACP session for follow-ups.
+            cfg = load_config()
+            if not _collab_available(cfg):
+                return self._send(400, {"error": "needs two agents installed"})
+            msgs = data.get("messages") or []
+            kinds = [k for k in (data.get("agents") or _available_agent_kinds())
+                     if k in _available_agent_kinds()][:2]
+            base = data.get("session_id") or secrets.token_hex(6)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+            emit_lock = threading.Lock()
+
+            def cemit(rec):
+                with emit_lock:
+                    try:
+                        self.wfile.write(("data: " + json.dumps(rec) + "\n\n").encode()); self.wfile.flush()
+                    except Exception:
+                        pass
+
+            def run_one(kind):
+                try:
+                    for ev, payload in local_agent_stream(msgs, "compare:%s:%s" % (base, kind),
+                                                          None, None, {}, kind):
+                        if ev == "done":
+                            break
+                        cemit({"type": ev, "agent": kind, "data": payload})
+                except Exception as e:
+                    cemit({"type": "error", "agent": kind, "data": str(e)[:300]})
+                cemit({"type": "agent_done", "agent": kind})
+
+            threads = [threading.Thread(target=run_one, args=(k,), daemon=True) for k in kinds]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+            cemit({"type": "all_done", "session_id": base})
+            return
+        if path == "/api/compare/cancel":
+            base = data.get("session_id") or ""
+            n = sum(int(bool(_cancel_turn("compare:%s:%s" % (base, k)))) for k in _available_agent_kinds())
+            return self._send(200, {"stopped": n})
+        if path == "/api/collab/stream":
+            # EXPERIMENTAL Mode 2 — the two agents work ONE task together, taking turns.
+            cfg = load_config()
+            if not _collab_available(cfg):
+                return self._send(400, {"error": "needs two agents installed"})
+            goal = (data.get("goal") or _latest_user(data.get("messages") or []) or "").strip()
+            if not goal:
+                return self._send(400, {"error": "empty task"})
+            st = collab_status(cfg)
+            order = [k for k in (data.get("order") or st["order"]) if k in st["kinds"]][:2] or st["order"][:2]
+            collab_id = data.get("collab_id") or secrets.token_hex(6)
+            state = {"collab_id": collab_id, "goal": goal, "order": order, "names": st["names"],
+                     "max_rounds": max(2, min(16, int(data.get("max_rounds") or st["max_rounds"]))),
+                     "round": 0, "lock_holder": None, "status": "running", "done_reason": None,
+                     "transcript": [], "plan": []}
+            with _collab_lock:
+                _collab_runs[collab_id] = state
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+
+            def emit(ev, payload=None):
+                rec = {"type": ev}
+                rec.update(payload or {})
+                try:
+                    self.wfile.write(("data: " + json.dumps(rec) + "\n\n").encode()); self.wfile.flush()
+                except Exception:
+                    pass
+
+            emit("collab_start", {"collab_id": collab_id, "order": order, "names": st["names"],
+                                  "goal": goal, "max_rounds": state["max_rounds"]})
+            try:
+                for ev, payload in collab_run(collab_id):
+                    emit(ev, payload)
+            except Exception as e:
+                emit("error", {"data": str(e)[:300]})
+            finally:
+                with _collab_lock:
+                    _collab_runs.pop(collab_id, None)
+            return
+        if path == "/api/collab/cancel":
+            return self._send(200, {"stopped": bool(_cancel_collab(data.get("collab_id") or ""))})
         if path == "/api/auth/setup":
             # Turn the lock ON and set the password. Once enabled, changing it
             # requires a valid session (you must be logged in).

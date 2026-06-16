@@ -55,6 +55,10 @@ It opens at `http://127.0.0.1:8700` (or the next free port). No Python? The inst
 
 ### 📖 **[Read the full guide → FEATURES.md](FEATURES.md)**
 
+### 🧪 **[Two agents working together (experimental) → EXPERIMENTAL.md](EXPERIMENTAL.md)**
+
+If you have both Hermes *and* OpenClaw installed, AgentBay can run them as a pair — answering side by side, or **collaborating on one task** (taking turns, handing off, reviewing each other, with their conversation visible to you). It's off by default and still a sandbox — **[ideas and corrections very welcome](https://github.com/NullNaveen/agentbay/issues).**
+
 ## Update & uninstall
 
 An **"Update available"** banner appears in the app whenever a new version is on GitHub — one click updates and reloads. (Or: Settings → About → Check for updates.)

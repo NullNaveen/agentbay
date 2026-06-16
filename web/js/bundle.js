@@ -3619,7 +3619,173 @@
       onToast: onToast
     })), /*#__PURE__*/React.createElement(BrowserUseCard, {
       onToast: onToast
+    }), /*#__PURE__*/React.createElement(ExperimentalCollabCard, {
+      onToast: onToast
     }));
+  }
+
+  // ---- Experimental: two agents together (compare + collaborate). Only shows when
+  // BOTH Hermes and OpenClaw are installed. Off by default. ----
+  function ExperimentalCollabCard({
+    onToast
+  }) {
+    const [st, setSt] = React.useState(null); // /api/collab/status
+    const load = () => fetch("/api/collab/status").then(r => r.json()).then(setSt).catch(() => {});
+    React.useEffect(() => {
+      load();
+    }, []);
+    if (!st || !st.available) return null; // needs >=2 local agents
+    const save = (patch, msg) => {
+      fetch("/api/config", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(patch)
+      }).then(() => load()).then(() => msg && onToast && onToast({
+        type: "success",
+        title: msg
+      })).catch(() => {});
+    };
+    const names = st.order.map(k => st.names[k]).join(" + ");
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        border: "1px solid var(--border)",
+        borderRadius: 12,
+        padding: 14,
+        marginTop: 12
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "sec-title",
+      style: {
+        flex: 1
+      }
+    }, "Two agents together"), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10.5,
+        fontWeight: 700,
+        letterSpacing: ".04em",
+        textTransform: "uppercase",
+        color: "var(--accent-deep)",
+        background: "var(--accent-soft, rgba(180,120,40,.14))",
+        padding: "2px 7px",
+        borderRadius: 6
+      }
+    }, "Experimental")), /*#__PURE__*/React.createElement("p", {
+      style: {
+        fontSize: 12.5,
+        color: "var(--text-3)",
+        margin: "5px 0 10px"
+      }
+    }, "You have ", names, ". These let them work as a pair \u2014 see two answers side by side, or watch them collaborate on one task. Costs ~2\xD7 and isn't always smarter \u2014 it's a different experience. ", /*#__PURE__*/React.createElement("a", {
+      href: "EXPERIMENTAL.md",
+      target: "_blank",
+      rel: "noreferrer",
+      style: {
+        color: "var(--accent-deep)"
+      }
+    }, "How it works \u2197")), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        marginTop: 6
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontWeight: 600,
+        fontSize: 13.5
+      }
+    }, "Compare side by side"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        color: "var(--text-3)"
+      }
+    }, "Both agents answer the same prompt at once.")), /*#__PURE__*/React.createElement(Switch, {
+      on: !!st.compare_enabled,
+      onChange: v => save({
+        compare_enabled: v
+      }, "Compare " + (v ? "on" : "off")),
+      label: "Compare mode"
+    })), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        marginTop: 12
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontWeight: 600,
+        fontSize: 13.5
+      }
+    }, "Collaborate on one task"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        color: "var(--text-3)"
+      }
+    }, "They take turns, hand off, and review each other.")), /*#__PURE__*/React.createElement(Switch, {
+      on: !!st.collab_enabled,
+      onChange: v => save({
+        collab_enabled: v
+      }, "Collaborate " + (v ? "on" : "off")),
+      label: "Collaborate mode"
+    })), st.collab_enabled && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginTop: 12
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12.5,
+        color: "var(--text-3)",
+        marginBottom: 6
+      }
+    }, "Round limit (turns before it must stop): ", /*#__PURE__*/React.createElement("b", {
+      style: {
+        color: "var(--text-1)"
+      }
+    }, st.max_rounds)), /*#__PURE__*/React.createElement("input", {
+      type: "range",
+      min: "2",
+      max: "16",
+      step: "1",
+      value: st.max_rounds,
+      onChange: e => setSt(s => ({
+        ...s,
+        max_rounds: +e.target.value
+      })),
+      onMouseUp: e => save({
+        collab_max_rounds: +e.target.value
+      }),
+      onTouchEnd: e => save({
+        collab_max_rounds: +e.target.value
+      }),
+      style: {
+        width: "100%",
+        accentColor: "var(--accent-deep)"
+      }
+    })), (st.compare_enabled || st.collab_enabled) && /*#__PURE__*/React.createElement("p", {
+      style: {
+        fontSize: 11.5,
+        color: "var(--text-3)",
+        margin: "12px 0 0",
+        lineHeight: 1.5
+      }
+    }, "\u26A0 Both agents have full tool access on the same files. Turn-taking keeps them from editing at the same instant, but they can still overwrite each other across turns \u2014 best on tasks with a natural split. Type ", /*#__PURE__*/React.createElement("b", null, "/together"), " in the composer to start."));
   }
 
   // ---- Reasoning effort: how hard the local Hermes agent thinks (global agent default) ----
@@ -8871,6 +9037,439 @@ Object.assign(window, {
   function uid() {
     return "s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
   }
+
+  // ============================================================================
+  // EXPERIMENTAL — "Two agents together" overlay (compare + collaborate).
+  // Compare: both agents answer the same prompt in two columns. Collaborate: they
+  // take turns on ONE task; you watch the live working agent + their conversation.
+  // ============================================================================
+  const COLLAB_COLOR = {
+    hermes: "var(--accent-deep)",
+    openclaw: "#c0341f"
+  };
+  const DONE_MSG = {
+    consensus: "✓ The agents agreed the task is done.",
+    max_rounds: "Reached the round limit — stopped here.",
+    repetition: "Stopped — the conversation started repeating.",
+    user_stop: "Stopped by you."
+  };
+  function CollabStreamPanel({
+    agent,
+    name,
+    lane,
+    live
+  }) {
+    const AG = window.AgentGlyph;
+    const [showR, setShowR] = React.useState(false);
+    const tools = (lane.tools || []).filter(Boolean);
+    return /*#__PURE__*/React.createElement("div", {
+      className: "clab-stream"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "clab-stream-head"
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        display: "inline-flex"
+      }
+    }, /*#__PURE__*/React.createElement(AG, {
+      kind: agent,
+      size: 20,
+      flap: !!live
+    })), /*#__PURE__*/React.createElement("b", {
+      style: {
+        color: COLLAB_COLOR[agent] || "var(--text-1)"
+      }
+    }, name), live && /*#__PURE__*/React.createElement("span", {
+      className: "shimmer-text",
+      style: {
+        fontSize: 12
+      }
+    }, "working\u2026")), lane.reasoning ? /*#__PURE__*/React.createElement("div", {
+      className: "clab-reason"
+    }, /*#__PURE__*/React.createElement("button", {
+      className: "clab-reason-btn",
+      onClick: () => setShowR(v => !v)
+    }, showR ? "▾" : "▸", " thinking"), showR && /*#__PURE__*/React.createElement("div", {
+      className: "clab-reason-body"
+    }, lane.reasoning)) : null, tools.length > 0 && /*#__PURE__*/React.createElement("div", {
+      className: "clab-tools"
+    }, tools.map((t, i) => /*#__PURE__*/React.createElement("span", {
+      key: i,
+      className: "clab-tool " + (t.status || "")
+    }, (t.status === "completed" ? "✓ " : "• ") + (t.name || t.kind || "tool")))), /*#__PURE__*/React.createElement("div", {
+      className: "clab-text"
+    }, lane.live || (live ? "" : lane.done ? "" : "…")));
+  }
+  function CollabLab({
+    status,
+    onClose,
+    onToast
+  }) {
+    const AG = window.AgentGlyph;
+    const modes = [];
+    if (status.compare_enabled) modes.push("compare");
+    if (status.collab_enabled) modes.push("collab");
+    const [mode, setMode] = React.useState(modes[0] || "compare");
+    const [task, setTask] = React.useState("");
+    const [running, setRunning] = React.useState(false);
+    const [lanes, setLanes] = React.useState({});
+    const [convo, setConvo] = React.useState([]);
+    const [turn, setTurn] = React.useState(null);
+    const [round, setRound] = React.useState(0);
+    const [doneInfo, setDoneInfo] = React.useState(null);
+    const abortRef = React.useRef(null);
+    const collabIdRef = React.useRef(null);
+    const sidRef = React.useRef(null);
+    const feedRef = React.useRef(null);
+    const order = status.order,
+      names = status.names;
+    React.useEffect(() => {
+      if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
+    }, [convo, turn, lanes]);
+    const upLane = (agent, fn) => setLanes(L => {
+      const cur = L[agent] || {
+        live: "",
+        reasoning: "",
+        tools: [],
+        plan: [],
+        done: false
+      };
+      return {
+        ...L,
+        [agent]: fn({
+          ...cur
+        })
+      };
+    });
+    const stop = () => {
+      if (abortRef.current) {
+        try {
+          abortRef.current.abort();
+        } catch (e) {}
+      }
+      if (mode === "collab" && collabIdRef.current) fetch("/api/collab/cancel", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          collab_id: collabIdRef.current
+        })
+      }).catch(() => {});
+      if (mode === "compare" && sidRef.current) fetch("/api/compare/cancel", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          session_id: sidRef.current
+        })
+      }).catch(() => {});
+      setRunning(false);
+      setTurn(null);
+    };
+    const handle = ev => {
+      const a = ev.agent;
+      switch (ev.type) {
+        case "collab_start":
+          collabIdRef.current = ev.collab_id;
+          break;
+        case "turn_start":
+          setTurn({
+            agent: a,
+            name: ev.name,
+            role: ev.role,
+            round: ev.round
+          });
+          setRound(ev.round);
+          upLane(a, c => {
+            c.live = "";
+            c.reasoning = "";
+            c.tools = [];
+            return c;
+          });
+          break;
+        case "token":
+          upLane(a, c => {
+            c.live = (c.live || "") + ev.data;
+            return c;
+          });
+          break;
+        case "reasoning":
+          upLane(a, c => {
+            c.reasoning = (c.reasoning || "") + ev.data;
+            return c;
+          });
+          break;
+        case "tool":
+          upLane(a, c => {
+            const i = ev.data && ev.data.index || 0;
+            const t = c.tools.slice();
+            t[i] = Object.assign({}, t[i], ev.data);
+            c.tools = t;
+            return c;
+          });
+          break;
+        case "plan":
+          upLane(a, c => {
+            c.plan = Array.isArray(ev.data) ? ev.data : [];
+            return c;
+          });
+          break;
+        case "handoff":
+          setConvo(C => C.concat([{
+            agent: a,
+            name: ev.name,
+            round: ev.round,
+            text: ev.text
+          }]));
+          upLane(a, c => {
+            c.live = "";
+            return c;
+          });
+          break;
+        case "agent_done":
+          upLane(a, c => {
+            c.done = true;
+            return c;
+          });
+          break;
+        case "collab_done":
+          setDoneInfo({
+            reason: ev.reason
+          });
+          break;
+        case "error":
+          onToast && onToast({
+            type: "error",
+            title: (a ? names[a] + ": " : "") + (ev.data || "error")
+          });
+          break;
+        default:
+          break;
+      }
+    };
+    const start = async () => {
+      const t = task.trim();
+      if (!t || running) return;
+      setLanes({});
+      setConvo([]);
+      setTurn(null);
+      setRound(0);
+      setDoneInfo(null);
+      setRunning(true);
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
+      const sid = "c" + Date.now().toString(36);
+      sidRef.current = sid;
+      collabIdRef.current = null;
+      const url = mode === "collab" ? "/api/collab/stream" : "/api/compare/stream";
+      const body = mode === "collab" ? JSON.stringify({
+        goal: t,
+        max_rounds: status.max_rounds,
+        order
+      }) : JSON.stringify({
+        session_id: sid,
+        messages: [{
+          role: "user",
+          content: t
+        }]
+      });
+      if (mode === "compare") {
+        const init = {};
+        order.forEach(k => init[k] = {
+          live: "",
+          reasoning: "",
+          tools: [],
+          plan: [],
+          done: false
+        });
+        setLanes(init);
+      }
+      let resp;
+      try {
+        resp = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body,
+          signal: ctrl.signal
+        });
+        if (!resp.ok || !resp.body) throw new Error("no stream");
+      } catch (e) {
+        if (!(e && e.name === "AbortError")) onToast && onToast({
+          type: "error",
+          title: "Couldn't start"
+        });
+        setRunning(false);
+        return;
+      }
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      try {
+        while (true) {
+          const {
+            done,
+            value
+          } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, {
+            stream: true
+          });
+          let nl;
+          while ((nl = buf.indexOf("\n\n")) >= 0) {
+            const line = buf.slice(0, nl).split("\n").find(l => l.startsWith("data:"));
+            buf = buf.slice(nl + 2);
+            if (!line) continue;
+            let ev;
+            try {
+              ev = JSON.parse(line.slice(5).trim());
+            } catch (e) {
+              continue;
+            }
+            handle(ev);
+          }
+        }
+      } catch (e) {/* aborted / network end */}
+      setRunning(false);
+      setTurn(null);
+    };
+    const onKey = e => {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        start();
+      }
+    };
+    const plan = turn && lanes[turn.agent] && lanes[turn.agent].plan || [];
+    return /*#__PURE__*/React.createElement("div", {
+      className: "collab-lab",
+      role: "dialog",
+      "aria-label": "Two agents together"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "clab-head"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "clab-title"
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        display: "inline-flex",
+        gap: -6
+      }
+    }, /*#__PURE__*/React.createElement(AG, {
+      kind: order[0],
+      size: 22
+    }), /*#__PURE__*/React.createElement(AG, {
+      kind: order[1],
+      size: 22
+    })), /*#__PURE__*/React.createElement("span", null, "Two agents together"), /*#__PURE__*/React.createElement("span", {
+      className: "clab-exp"
+    }, "Experimental")), modes.length > 1 && /*#__PURE__*/React.createElement("div", {
+      className: "clab-tabs"
+    }, /*#__PURE__*/React.createElement("button", {
+      className: mode === "compare" ? "on" : "",
+      disabled: running,
+      onClick: () => setMode("compare")
+    }, "Compare"), /*#__PURE__*/React.createElement("button", {
+      className: mode === "collab" ? "on" : "",
+      disabled: running,
+      onClick: () => setMode("collab")
+    }, "Collaborate")), /*#__PURE__*/React.createElement("button", {
+      className: "icon-btn",
+      "aria-label": "Close",
+      onClick: () => {
+        stop();
+        onClose();
+      }
+    }, /*#__PURE__*/React.createElement(window.Icons.X, {
+      size: 18
+    }))), /*#__PURE__*/React.createElement("div", {
+      className: "clab-intro"
+    }, mode === "compare" ? /*#__PURE__*/React.createElement("span", null, "Both agents answer the ", /*#__PURE__*/React.createElement("b", null, "same prompt"), " at once \u2014 read both, pick the one you like.") : /*#__PURE__*/React.createElement("span", null, "The agents work ", /*#__PURE__*/React.createElement("b", null, "one task together"), ", taking turns. Watch them hand off and review each other below. Best on tasks with a natural split.")), /*#__PURE__*/React.createElement("div", {
+      className: "clab-compose"
+    }, /*#__PURE__*/React.createElement("textarea", {
+      value: task,
+      disabled: running,
+      onChange: e => setTask(e.target.value),
+      onKeyDown: onKey,
+      placeholder: mode === "compare" ? "Ask both agents the same thing…" : "Describe the task for both agents to build together…",
+      rows: 2
+    }), running ? /*#__PURE__*/React.createElement("button", {
+      className: "btn",
+      onClick: stop
+    }, /*#__PURE__*/React.createElement(window.Icons.Stop, {
+      size: 15
+    }), " Stop") : /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-primary",
+      disabled: !task.trim(),
+      onClick: start
+    }, "Start")), mode === "collab" && (round > 0 || doneInfo) && /*#__PURE__*/React.createElement("div", {
+      className: "clab-status"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "clab-round"
+    }, "Round ", round, status.max_rounds ? " / " + status.max_rounds : ""), turn && running && /*#__PURE__*/React.createElement("span", {
+      className: "clab-working"
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        display: "inline-flex"
+      }
+    }, /*#__PURE__*/React.createElement(AG, {
+      kind: turn.agent,
+      size: 16,
+      flap: true
+    })), " ", turn.name, " is working", turn.role === "lead" ? " (planning)" : " (reviewing + building)", "\u2026"), doneInfo && /*#__PURE__*/React.createElement("span", {
+      className: "clab-doneflag"
+    }, DONE_MSG[doneInfo.reason] || "Done."), plan.length > 0 && /*#__PURE__*/React.createElement("div", {
+      className: "clab-plan"
+    }, plan.map((p, i) => /*#__PURE__*/React.createElement("span", {
+      key: i,
+      className: "clab-plan-item " + (p.status || "pending")
+    }, p.status === "completed" ? "✓" : p.status === "in_progress" ? "◐" : "○", " ", p.content)))), /*#__PURE__*/React.createElement("div", {
+      className: "clab-body"
+    }, mode === "compare" ? /*#__PURE__*/React.createElement("div", {
+      className: "clab-cols"
+    }, order.map(k => /*#__PURE__*/React.createElement("div", {
+      className: "clab-col",
+      key: k
+    }, /*#__PURE__*/React.createElement(CollabStreamPanel, {
+      agent: k,
+      name: names[k],
+      lane: lanes[k] || {},
+      live: running && !(lanes[k] && lanes[k].done)
+    })))) : /*#__PURE__*/React.createElement("div", {
+      className: "clab-collab"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "clab-feed",
+      ref: feedRef
+    }, convo.length === 0 && !running && /*#__PURE__*/React.createElement("div", {
+      className: "clab-empty"
+    }, "Describe a task above and press Start. The two agents will plan, split the work, and hand off to each other here."), convo.map((m, i) => /*#__PURE__*/React.createElement("div", {
+      key: i,
+      className: "clab-bubble " + (m.agent === order[0] ? "left" : "right")
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "clab-bubble-head",
+      style: {
+        color: COLLAB_COLOR[m.agent]
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        display: "inline-flex"
+      }
+    }, /*#__PURE__*/React.createElement(AG, {
+      kind: m.agent,
+      size: 16
+    })), m.name, " ", /*#__PURE__*/React.createElement("span", {
+      className: "clab-bubble-round"
+    }, "\xB7 round ", m.round)), /*#__PURE__*/React.createElement("div", {
+      className: "clab-bubble-text"
+    }, m.text || "…"))), turn && running && lanes[turn.agent] && (lanes[turn.agent].live || lanes[turn.agent].reasoning || (lanes[turn.agent].tools || []).length) ? /*#__PURE__*/React.createElement("div", {
+      className: "clab-live"
+    }, /*#__PURE__*/React.createElement(CollabStreamPanel, {
+      agent: turn.agent,
+      name: turn.name,
+      lane: lanes[turn.agent] || {},
+      live: true
+    })) : null))));
+  }
   function App() {
     const toast = useToast();
     const [loggedIn, setLoggedIn] = useLocal("hermes_logged", true);
@@ -8888,6 +9487,14 @@ Object.assign(window, {
       window.__setAgentKind = setAgentKind; // AgentKindCard (separate IIFE) calls this on switch
       fetch("/api/agent/active").then(r => r.json()).then(d => setAgentKind(d.active || "hermes")).catch(() => {});
     }, []);
+
+    // experimental "two agents together" availability (compare / collaborate)
+    const [collabStatus, setCollabStatus] = useState(null);
+    const refreshCollab = () => fetch("/api/collab/status").then(r => r.json()).then(setCollabStatus).catch(() => {});
+    useEffect(() => {
+      refreshCollab();
+    }, []);
+    const collabOn = !!(collabStatus && collabStatus.available && (collabStatus.compare_enabled || collabStatus.collab_enabled));
 
     // ---- server-side chat sync: every browser/device on this account shares chats.
     // The store lives with the AgentBay instance; we merge by id (newest `updated`
@@ -9938,6 +10545,14 @@ Object.assign(window, {
         kind: "shortcuts"
       })
     }];
+    if (collabOn) slashCommands.splice(1, 0, {
+      name: "together",
+      desc: "Two agents — compare or collaborate",
+      icon: "Layers",
+      run: () => setModal({
+        kind: "collab"
+      })
+    });
     const composerProps = {
       value: draft,
       onChange: setDraft,
@@ -10299,6 +10914,7 @@ Object.assign(window, {
       onClose: () => {
         setModal(null);
         refreshModels();
+        refreshCollab();
       },
       defaultModel: defaultModel,
       onDefaultModel: m => {
@@ -10398,6 +11014,10 @@ Object.assign(window, {
       sessions: sessions,
       onClose: () => setModal(null),
       onNewChat: newChat
+    }), modal && modal.kind === "collab" && collabStatus && collabStatus.available && /*#__PURE__*/React.createElement(CollabLab, {
+      status: collabStatus,
+      onClose: () => setModal(null),
+      onToast: toast
     }), modal && modal.kind === "projects" && /*#__PURE__*/React.createElement(Hub.Projects, {
       projects: projects,
       setProjects: setProjects,
