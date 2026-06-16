@@ -121,6 +121,7 @@
     const flap = p && p.flap;
     return React.createElement("svg", {
       width: size, height: size, viewBox: "0 0 48 48", fill: "none", "aria-hidden": "true",
+      className: "ag-glyph ag-hermes" + (flap ? " anim" : ""),
       style: p && p.style,
     }, [
       // left wing
@@ -146,44 +147,40 @@
   }
 
   // ---- per-agent brand glyphs (each has its own cute thinking animation) ----
-  // OpenClaw: a round crab that snips its pincers + floats bubbles while thinking.
+  // OpenClaw: a brand-red claw creature that breathes, snaps its pincers, turns in
+  // pseudo-3D, and throws off rising sparks while thinking (OpenClaw "dreaming" vibe).
   function OpenClawGlyph(p) {
     const size = (p && p.size) || 40, anim = p && p.flap;
     return (
-      <svg width={size} height={size} viewBox="0 0 24 24" className={"ag-glyph ag-oc" + (anim ? " anim" : "")} style={p && p.style} aria-hidden="true">
-        <g className="oc-bubbles" fill="var(--accent, currentColor)">
-          <circle className="oc-b oc-b1" cx="12" cy="6" r="1.05" />
-          <circle className="oc-b oc-b2" cx="14.4" cy="6" r="0.8" />
-          <circle className="oc-b oc-b3" cx="9.7" cy="6" r="0.65" />
-        </g>
-        <g fill="currentColor">
-          <g className="oc-stalks">
-            <rect x="9.05" y="9.1" width="1.5" height="3" rx="0.75" />
-            <rect x="13.45" y="9.1" width="1.5" height="3" rx="0.75" />
-            <circle cx="9.8" cy="8.7" r="1.35" />
-            <circle cx="14.2" cy="8.7" r="1.35" />
-          </g>
-          <path d="M5 16.2c0-3.6 3.1-6 7-6s7 2.4 7 6c0 1.9-1.5 3.4-3.4 3.4H8.4C6.5 19.6 5 18.1 5 16.2Z" />
-          <g>
-            <rect x="5.2" y="17.8" width="2.6" height="1.2" rx="0.6" transform="rotate(20 6.5 18.4)" />
-            <rect x="16.2" y="17.8" width="2.6" height="1.2" rx="0.6" transform="rotate(-20 17.5 18.4)" />
-          </g>
-          <g className="oc-claw oc-clawL" transform="translate(5.4 13.8)">
-            <rect x="-0.6" y="0" width="1.3" height="3.4" rx="0.65" transform="rotate(30 0 0)" />
-            <g className="oc-pincer">
-              <path d="M-1.6 -2.2c-1.7-0.5-3 0.1-3.3 1.3 1 0.2 2.1 0.1 3.3-0.4Z" />
-              <path d="M-1.4 -1c-1.7 0.3-3 1.2-3 2.4 1 -0.1 2-0.6 3-1.5Z" />
-            </g>
-          </g>
-          <g className="oc-claw oc-clawR" transform="translate(18.6 13.8)">
-            <rect x="-0.7" y="0" width="1.3" height="3.4" rx="0.65" transform="rotate(-30 0 0)" />
-            <g className="oc-pincer">
-              <path d="M1.6 -2.2c1.7-0.5 3 0.1 3.3 1.3-1 0.2-2.1 0.1-3.3-0.4Z" />
-              <path d="M1.4 -1c1.7 0.3 3 1.2 3 2.4-1-0.1-2-0.6-3-1.5Z" />
-            </g>
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={"ag-glyph ag-oc" + (anim ? " anim" : "")} style={p && p.style} aria-hidden="true">
+        <defs>
+          <linearGradient id="ocg" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stopColor="#ff5c5c" />
+            <stop offset="1" stopColor="#991b1b" />
+          </linearGradient>
+          <radialGradient id="ocglow" cx="0.5" cy="0.5" r="0.5">
+            <stop offset="0" stopColor="#ff5c5c" stopOpacity="0.55" />
+            <stop offset="1" stopColor="#ff5c5c" stopOpacity="0" />
+          </radialGradient>
+        </defs>
+        <circle className="oc-glow" cx="12" cy="12" r="9" fill="url(#ocglow)" />
+        <g className="oc-mark">
+          <g className="oc-body">
+            <ellipse cx="12" cy="13" rx="5" ry="6" fill="url(#ocg)" />
+            <circle cx="10" cy="10.5" r="1.05" fill="#2a0808" />
+            <circle cx="14" cy="10.5" r="1.05" fill="#2a0808" />
+            {/* left pincer (two jaws snapping) */}
+            <path className="oc-claw-top" d="M8 8 C4 6 2.2 7.5 2.6 10 C2.9 8 4.5 7.4 6 7.9 C7.1 8.3 7.6 8.1 8 8Z" fill="url(#ocg)" />
+            <path className="oc-claw-bot" d="M8 8 C5 9.4 3.4 11.6 4.4 13.6 C4.5 11.6 5.8 10.4 7.2 9.6 C8 9.1 8 8.5 8 8Z" fill="url(#ocg)" />
+            {/* right pincer (mirrored, opposite phase) */}
+            <path className="oc-claw-top" style={{ transformOrigin: "16px 8px", animationName: "oc-pinch-low" }} d="M16 8 C20 6 21.8 7.5 21.4 10 C21.1 8 19.5 7.4 18 7.9 C16.9 8.3 16.4 8.1 16 8Z" fill="url(#ocg)" />
+            <path className="oc-claw-bot" style={{ transformOrigin: "16px 8px", animationName: "oc-pinch" }} d="M16 8 C19 9.4 20.6 11.6 19.6 13.6 C19.5 11.6 18.2 10.4 16.8 9.6 C16 9.1 16 8.5 16 8Z" fill="url(#ocg)" />
           </g>
         </g>
-        <circle cx="12" cy="15.6" r="1.15" fill="var(--accent, currentColor)" opacity="0.55" />
+        {/* dreams-float-z orbiting motes */}
+        <circle className="oc-spark s1" cx="17" cy="6" r="1" fill="#ff5c5c" />
+        <circle className="oc-spark s2" cx="6" cy="6" r="0.9" fill="#ff7a7a" />
+        <circle className="oc-spark s3" cx="12" cy="3" r="0.8" fill="#ff5c5c" />
       </svg>
     );
   }
@@ -819,7 +816,7 @@
     return (
       <div className="turn assistant anim-fadeup">
         <div className="assistant-head">
-          {avatars !== false && <span className="am-icon"><window.AgentGlyph size={17} flap={streaming && !msg.content} /></span>}
+          {avatars !== false && <span className="am-icon"><window.AgentGlyph size={17} flap={!!streaming} /></span>}
           <span className="am-name">{meta.name}</span>
           {streaming && !msg.content && <span className="am-thinking shimmer-text">Thinking…</span>}
           {showTimestamps && msg.ts && <span className="ts">{msg.ts}</span>}

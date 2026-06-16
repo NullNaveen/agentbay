@@ -418,23 +418,30 @@ body.no-anim *::after {
 
 /* ---- per-agent thinking glyphs (animate only while .anim) ---- */
 .ag-glyph { display: inline-block; overflow: visible; }
-/* OpenClaw — Pincer the thinking crab */
-.ag-oc .oc-stalks, .ag-oc .oc-claw, .ag-oc .oc-pincer, .ag-oc .oc-b { transform-box: fill-box; }
-.ag-oc.anim .oc-stalks { transform-origin: 50% 100%; animation: oc-stalk 1.6s ease-in-out infinite; }
-.ag-oc.anim .oc-clawL { animation: oc-bobL 1.4s ease-in-out infinite; }
-.ag-oc.anim .oc-clawR { animation: oc-bobR 1.4s ease-in-out infinite; animation-delay: -0.7s; }
-.ag-oc.anim .oc-clawL .oc-pincer { transform-origin: 90% 60%; animation: oc-snipL 1.4s ease-in-out infinite; }
-.ag-oc.anim .oc-clawR .oc-pincer { transform-origin: 10% 60%; animation: oc-snipR 1.4s ease-in-out infinite; animation-delay: -0.7s; }
-.ag-oc .oc-b { transform-origin: 50% 100%; opacity: 0; }
-.ag-oc.anim .oc-b1 { animation: oc-bub 1.8s ease-out infinite; }
-.ag-oc.anim .oc-b2 { animation: oc-bub 1.8s ease-out 0.6s infinite; }
-.ag-oc.anim .oc-b3 { animation: oc-bub 1.8s ease-out 1.2s infinite; }
-@keyframes oc-snipL { 0%,100% { transform: rotate(0); } 50% { transform: rotate(22deg); } }
-@keyframes oc-snipR { 0%,100% { transform: rotate(0); } 50% { transform: rotate(-22deg); } }
-@keyframes oc-bobL { 0%,100% { transform: translateY(0) rotate(0); } 50% { transform: translateY(-0.6px) rotate(-4deg); } }
-@keyframes oc-bobR { 0%,100% { transform: translateY(0) rotate(0); } 50% { transform: translateY(-0.6px) rotate(4deg); } }
-@keyframes oc-stalk { 0%,100% { transform: rotate(0); } 35% { transform: rotate(-5deg); } 70% { transform: rotate(4deg); } }
-@keyframes oc-bub { 0% { transform: translateY(0) scale(.4); opacity: 0; } 25% { opacity: 1; } 80% { opacity: .9; } 100% { transform: translateY(-5px) scale(1); opacity: 0; } }
+/* Hermes — flapping caduceus wings (now works anywhere, not just inside .mascot) */
+.ag-hermes .wing-l, .ag-hermes .wing-r { transform-box: fill-box; }
+.ag-hermes.anim .wing-l { transform-origin: 90% 60%; animation: flap-l .5s ease-in-out infinite; }
+.ag-hermes.anim .wing-r { transform-origin: 10% 60%; animation: flap-r .5s ease-in-out infinite; }
+/* OpenClaw — red dreaming claw: breathes, snaps pincers, pseudo-3D turn, glow + rising sparks */
+.ag-oc .oc-glow, .ag-oc .oc-mark, .ag-oc .oc-body, .ag-oc .oc-claw-top, .ag-oc .oc-claw-bot, .ag-oc .oc-spark { transform-box: view-box; }
+.ag-oc .oc-glow { transform-origin: 12px 12px; }
+.ag-oc .oc-mark, .ag-oc .oc-body { transform-origin: 12px 13px; }
+.ag-oc .oc-claw-top, .ag-oc .oc-claw-bot { transform-origin: 8px 8px; }
+.ag-oc .oc-spark { opacity: 0; }
+.ag-oc.anim .oc-glow { animation: oc-glow 1.5s ease-in-out infinite; }
+.ag-oc.anim .oc-mark { animation: oc-depth 1.5s ease-in-out infinite; }
+.ag-oc.anim .oc-body { animation: oc-breathe 1.5s ease-in-out infinite; }
+.ag-oc.anim .oc-claw-top { animation: oc-pinch 1.5s ease-in-out infinite; }
+.ag-oc.anim .oc-claw-bot { animation: oc-pinch-low 1.5s ease-in-out infinite; }
+.ag-oc.anim .oc-spark { animation: oc-spark 1.5s ease-out infinite; }
+.ag-oc.anim .oc-spark.s2 { animation-delay: .5s; }
+.ag-oc.anim .oc-spark.s3 { animation-delay: 1s; }
+@keyframes oc-pinch { 0%,100% { transform: rotate(0); } 45%,60% { transform: rotate(-26deg); } }
+@keyframes oc-pinch-low { 0%,100% { transform: rotate(0); } 45%,60% { transform: rotate(26deg); } }
+@keyframes oc-breathe { 0%,100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-.6px) scale(1.05); } }
+@keyframes oc-depth { 0%,100% { transform: scaleX(1) rotate(0); } 50% { transform: scaleX(.78) rotate(8deg); } }
+@keyframes oc-glow { 0%,100% { opacity: .35; transform: scale(.9); } 50% { opacity: .9; transform: scale(1.25); } }
+@keyframes oc-spark { 0% { opacity: 0; transform: translate(0,0) scale(.5); } 20% { opacity: .9; } 100% { opacity: 0; transform: translate(3px,-5px) scale(1.1); } }
 /* Generic — thinking constellation */
 .ag-gen .gen-orbit, .ag-gen .gen-spark { transform-box: fill-box; transform-origin: center; }
 .ag-gen.anim .gen-orbit { animation: gen-orbit 4.5s linear infinite; }

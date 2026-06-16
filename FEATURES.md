@@ -169,10 +169,18 @@ Hermes — live reply, the agent's thinking, rich tool cards, real Stop, context
 usage — not a one-shot reply.
 
 When both are installed, a **Settings → Agent → Active agent** switch picks
-which one powers your chats; the model picker, brand glyph (Hermes caduceus vs
-the OpenClaw crab), and even the *thinking animation* change to match. The
-**Scheduled tasks** panel is agent-aware too — it reads/writes whichever agent's
-cron jobs.
+which one powers your chats; the model picker, brand glyph (Hermes's amber
+caduceus vs OpenClaw's red claw), and even the *thinking animation* change to
+match. The **Scheduled tasks** panel is agent-aware too — it reads/writes
+whichever agent's cron jobs.
+
+> **OpenClaw thinking:** Hermes streams its reasoning as a separate channel, so
+> the Thinking panel fills live. OpenClaw's local models instead *inline* their
+> reasoning into the reply (as a `<think>…</think>` block or a leading
+> "**Reasoning:**" / "**Step-by-step:**" section). AgentBay peels that leading
+> block out into the Thinking panel when it's clearly marked; otherwise the
+> reasoning just stays in the reply. (This is an OpenClaw gateway limitation, not
+> an AgentBay one.)
 
 > Hermes and OpenClaw are both tested. A *different* agent isn't — if something
 > breaks, [open an issue](https://github.com/NullNaveen/agentbay/issues).

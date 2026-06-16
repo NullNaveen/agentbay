@@ -976,6 +976,80 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 _QR_BLOCK = set("▀▄██░▒▓ \xa0")   # ▀ ▄ █ shades + space
 
 
+class _OcReasoningPeeler:
+    """OpenClaw doesn't stream a separate `agent_thought_chunk` for its local models —
+    it inlines chain-of-thought into the reply (as a `<think>…</think>` wrapper, or a
+    leading `**Reasoning:**` / `**Step-by-step:**` block). This peels that leading
+    reasoning out of the token stream and routes it to the thinking panel, leaving the
+    real answer to stream as usual. SAFE BY CONSTRUCTION: it only ever *moves* a leading
+    block to reasoning, and on stream-end any still-buffered text is flushed to the
+    answer — so a reply is never swallowed into an empty answer. Hermes is untouched
+    (it emits real thought chunks)."""
+    _HEAD = re.compile(r"^\s*(<think\b|<thinking\b|\*\*\s*(reasoning|reason|step-by-step|"
+                       r"step by step|thinking|thought process|thoughts?|chain[- ]of[- ]thought|"
+                       r"let me think)\b)", re.I)
+    _THINK_CLOSE = re.compile(r"</think\s*>|</thinking\s*>", re.I)
+    # Boundary that ends a markdown reasoning preamble and begins the answer. Explicit
+    # answer headings only (no bare --- / ## ) to avoid cutting inside the reasoning.
+    _MD_BOUND = re.compile(r"(?im)^\s*\*\*\s*(answer|final answer|final|response|"
+                           r"solution|result|conclusion|here(?:'|’)?s|output|reply)\b")
+    _MD_HEADER = re.compile(r"^\s*<think(ing)?\b[^>]*>|^\s*\*\*\s*[^*\n]+\*\*:?\s*", re.I)
+
+    def __init__(self):
+        self.phase = "head"   # head -> think | md | answer
+        self.buf = ""
+
+    def feed(self, tx):
+        out = []
+        if self.phase == "answer":
+            return [("token", tx)]
+        self.buf += tx
+        if self.phase == "head":
+            stripped = self.buf.lstrip()
+            if not stripped:
+                return out                      # only whitespace so far — wait
+            m = self._HEAD.match(self.buf)
+            if m:
+                self.phase = "think" if m.group(1).lower().startswith("<think") else "md"
+                # fall through to the new phase with the current buffer
+            elif len(stripped) >= 26 or "\n" in self.buf:
+                self.phase = "answer"           # no reasoning preamble → plain answer
+                out.append(("token", self.buf)); self.buf = ""
+                return out
+            else:
+                return out                      # need more to decide
+        if self.phase == "think":
+            mm = self._THINK_CLOSE.search(self.buf)
+            if mm:
+                reasoning = self._MD_HEADER.sub("", self.buf[:mm.start()], count=1).strip()
+                rest = self.buf[mm.end():]
+                if reasoning:
+                    out.append(("reasoning", reasoning))
+                self.phase = "answer"; self.buf = ""
+                if rest.strip():
+                    out.append(("token", rest))
+            return out
+        if self.phase == "md":
+            mm = self._MD_BOUND.search(self.buf)
+            if mm and mm.start() > 0:
+                reasoning = self._MD_HEADER.sub("", self.buf[:mm.start()], count=1).strip()
+                rest = self.buf[mm.start():]
+                if reasoning:
+                    out.append(("reasoning", reasoning))
+                self.phase = "answer"; self.buf = ""
+                if rest.strip():
+                    out.append(("token", rest))
+            return out
+        return out
+
+    def finish(self):
+        out = []
+        if self.buf.strip():
+            out.append(("token", self.buf))     # never hide the whole reply in the panel
+        self.buf = ""; self.phase = "answer"
+        return out
+
+
 def _whatsapp_dir():
     """The gateway's WhatsApp state dir (new layout, with legacy fallback)."""
     he = os.environ.get("HERMES_HOME")
@@ -2772,6 +2846,7 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=N
     capturing = [False]
     tool_idx = {}; tool_n = [0]   # toolCallId -> slot, so multiple tools don't collapse into one
     tool_state = {}               # toolCallId -> merged card state (updates carry only deltas)
+    peeler = _OcReasoningPeeler() if is_oc else None   # OpenClaw inlines reasoning → peel it out
 
     def _send_prompt(sid):
         capturing[0] = True
@@ -2780,8 +2855,17 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=N
     def _proceed(sid):
         # Apply the picked model for this session, then prompt. set_model failures
         # are non-fatal — we still prompt (the agent uses its default brain).
-        # OpenClaw's ACP bridge has no session/set_model → go straight to prompt.
-        if model_id and not is_oc:
+        if is_oc:
+            # OpenClaw's ACP bridge has no session/set_model. Best-effort: ask it to
+            # surface a reasoning stream — harmless if the model/gateway emits none
+            # (the responses carry ids we don't track, so they're ignored downstream).
+            for cid, val in (("thought_level", "high"), ("reasoning_level", "stream")):
+                try:
+                    send("session/set_config_option", {"sessionId": sid, "configId": cid, "value": val})
+                except Exception:
+                    pass
+            st["prompt"] = _send_prompt(sid)
+        elif model_id:
             st["setmodel"] = send("session/set_model", {"sessionId": sid, "modelId": model_id})
         else:
             st["prompt"] = _send_prompt(sid)
@@ -2827,7 +2911,11 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=N
                 if t == "agent_message_chunk":
                     tx = _ANSI_RE.sub("", (u.get("content") or {}).get("text", ""))
                     if tx:
-                        yield ("token", tx)
+                        if peeler is not None:
+                            for pev, pdata in peeler.feed(tx):
+                                yield (pev, pdata)
+                        else:
+                            yield ("token", tx)
                 elif t == "agent_thought_chunk":
                     tx = _ANSI_RE.sub("", (u.get("content") or {}).get("text", ""))
                     if tx:
@@ -2899,6 +2987,9 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=N
                     if "error" in m:
                         yield ("error", str(m.get("error"))[:300])
                     break
+        if peeler is not None:
+            for pev, pdata in peeler.finish():   # flush any buffered tail to the answer
+                yield (pev, pdata)
         yield ("done", {})
     finally:
         if session_id:
@@ -3039,7 +3130,9 @@ def _openclaw_chat(messages, session_id=None, model=None, images=None, env=None)
     reply = _ANSI_RE.sub("", reply).strip()
     if not reply:
         reply = "⚠ the agent returned nothing." + ((" " + (r.stderr or "")[:200]) if r.stderr else "")
-    yield ("token", reply)
+    _pl = _OcReasoningPeeler()                       # peel inlined reasoning → thinking panel
+    for pev, pdata in _pl.feed(reply) + _pl.finish():
+        yield (pev, pdata)
     yield ("done", {})
 
 

@@ -368,6 +368,7 @@
       viewBox: "0 0 48 48",
       fill: "none",
       "aria-hidden": "true",
+      className: "ag-glyph ag-hermes" + (flap ? " anim" : ""),
       style: p && p.style
     }, [
     // left wing
@@ -419,7 +420,8 @@
   }
 
   // ---- per-agent brand glyphs (each has its own cute thinking animation) ----
-  // OpenClaw: a round crab that snips its pincers + floats bubbles while thinking.
+  // OpenClaw: a brand-red claw creature that breathes, snaps its pincers, turns in
+  // pseudo-3D, and throws off rising sparks while thinking (OpenClaw "dreaming" vibe).
   function OpenClawGlyph(p) {
     const size = p && p.size || 40,
       anim = p && p.flap;
@@ -427,105 +429,103 @@
       width: size,
       height: size,
       viewBox: "0 0 24 24",
+      fill: "none",
       className: "ag-glyph ag-oc" + (anim ? " anim" : ""),
       style: p && p.style,
       "aria-hidden": "true"
-    }, /*#__PURE__*/React.createElement("g", {
-      className: "oc-bubbles",
-      fill: "var(--accent, currentColor)"
-    }, /*#__PURE__*/React.createElement("circle", {
-      className: "oc-b oc-b1",
+    }, /*#__PURE__*/React.createElement("defs", null, /*#__PURE__*/React.createElement("linearGradient", {
+      id: "ocg",
+      x1: "0",
+      y1: "0",
+      x2: "1",
+      y2: "1"
+    }, /*#__PURE__*/React.createElement("stop", {
+      offset: "0",
+      stopColor: "#ff5c5c"
+    }), /*#__PURE__*/React.createElement("stop", {
+      offset: "1",
+      stopColor: "#991b1b"
+    })), /*#__PURE__*/React.createElement("radialGradient", {
+      id: "ocglow",
+      cx: "0.5",
+      cy: "0.5",
+      r: "0.5"
+    }, /*#__PURE__*/React.createElement("stop", {
+      offset: "0",
+      stopColor: "#ff5c5c",
+      stopOpacity: "0.55"
+    }), /*#__PURE__*/React.createElement("stop", {
+      offset: "1",
+      stopColor: "#ff5c5c",
+      stopOpacity: "0"
+    }))), /*#__PURE__*/React.createElement("circle", {
+      className: "oc-glow",
       cx: "12",
-      cy: "6",
-      r: "1.05"
-    }), /*#__PURE__*/React.createElement("circle", {
-      className: "oc-b oc-b2",
-      cx: "14.4",
-      cy: "6",
-      r: "0.8"
-    }), /*#__PURE__*/React.createElement("circle", {
-      className: "oc-b oc-b3",
-      cx: "9.7",
-      cy: "6",
-      r: "0.65"
-    })), /*#__PURE__*/React.createElement("g", {
-      fill: "currentColor"
+      cy: "12",
+      r: "9",
+      fill: "url(#ocglow)"
+    }), /*#__PURE__*/React.createElement("g", {
+      className: "oc-mark"
     }, /*#__PURE__*/React.createElement("g", {
-      className: "oc-stalks"
-    }, /*#__PURE__*/React.createElement("rect", {
-      x: "9.05",
-      y: "9.1",
-      width: "1.5",
-      height: "3",
-      rx: "0.75"
-    }), /*#__PURE__*/React.createElement("rect", {
-      x: "13.45",
-      y: "9.1",
-      width: "1.5",
-      height: "3",
-      rx: "0.75"
-    }), /*#__PURE__*/React.createElement("circle", {
-      cx: "9.8",
-      cy: "8.7",
-      r: "1.35"
-    }), /*#__PURE__*/React.createElement("circle", {
-      cx: "14.2",
-      cy: "8.7",
-      r: "1.35"
-    })), /*#__PURE__*/React.createElement("path", {
-      d: "M5 16.2c0-3.6 3.1-6 7-6s7 2.4 7 6c0 1.9-1.5 3.4-3.4 3.4H8.4C6.5 19.6 5 18.1 5 16.2Z"
-    }), /*#__PURE__*/React.createElement("g", null, /*#__PURE__*/React.createElement("rect", {
-      x: "5.2",
-      y: "17.8",
-      width: "2.6",
-      height: "1.2",
-      rx: "0.6",
-      transform: "rotate(20 6.5 18.4)"
-    }), /*#__PURE__*/React.createElement("rect", {
-      x: "16.2",
-      y: "17.8",
-      width: "2.6",
-      height: "1.2",
-      rx: "0.6",
-      transform: "rotate(-20 17.5 18.4)"
-    })), /*#__PURE__*/React.createElement("g", {
-      className: "oc-claw oc-clawL",
-      transform: "translate(5.4 13.8)"
-    }, /*#__PURE__*/React.createElement("rect", {
-      x: "-0.6",
-      y: "0",
-      width: "1.3",
-      height: "3.4",
-      rx: "0.65",
-      transform: "rotate(30 0 0)"
-    }), /*#__PURE__*/React.createElement("g", {
-      className: "oc-pincer"
-    }, /*#__PURE__*/React.createElement("path", {
-      d: "M-1.6 -2.2c-1.7-0.5-3 0.1-3.3 1.3 1 0.2 2.1 0.1 3.3-0.4Z"
-    }), /*#__PURE__*/React.createElement("path", {
-      d: "M-1.4 -1c-1.7 0.3-3 1.2-3 2.4 1 -0.1 2-0.6 3-1.5Z"
-    }))), /*#__PURE__*/React.createElement("g", {
-      className: "oc-claw oc-clawR",
-      transform: "translate(18.6 13.8)"
-    }, /*#__PURE__*/React.createElement("rect", {
-      x: "-0.7",
-      y: "0",
-      width: "1.3",
-      height: "3.4",
-      rx: "0.65",
-      transform: "rotate(-30 0 0)"
-    }), /*#__PURE__*/React.createElement("g", {
-      className: "oc-pincer"
-    }, /*#__PURE__*/React.createElement("path", {
-      d: "M1.6 -2.2c1.7-0.5 3 0.1 3.3 1.3-1 0.2-2.1 0.1-3.3-0.4Z"
-    }), /*#__PURE__*/React.createElement("path", {
-      d: "M1.4 -1c1.7 0.3 3 1.2 3 2.4-1-0.1-2-0.6-3-1.5Z"
-    })))), /*#__PURE__*/React.createElement("circle", {
+      className: "oc-body"
+    }, /*#__PURE__*/React.createElement("ellipse", {
       cx: "12",
-      cy: "15.6",
-      r: "1.15",
-      fill: "var(--accent, currentColor)",
-      opacity: "0.55"
+      cy: "13",
+      rx: "5",
+      ry: "6",
+      fill: "url(#ocg)"
+    }), /*#__PURE__*/React.createElement("circle", {
+      cx: "10",
+      cy: "10.5",
+      r: "1.05",
+      fill: "#2a0808"
+    }), /*#__PURE__*/React.createElement("circle", {
+      cx: "14",
+      cy: "10.5",
+      r: "1.05",
+      fill: "#2a0808"
+    }), /*#__PURE__*/React.createElement("path", {
+      className: "oc-claw-top",
+      d: "M8 8 C4 6 2.2 7.5 2.6 10 C2.9 8 4.5 7.4 6 7.9 C7.1 8.3 7.6 8.1 8 8Z",
+      fill: "url(#ocg)"
+    }), /*#__PURE__*/React.createElement("path", {
+      className: "oc-claw-bot",
+      d: "M8 8 C5 9.4 3.4 11.6 4.4 13.6 C4.5 11.6 5.8 10.4 7.2 9.6 C8 9.1 8 8.5 8 8Z",
+      fill: "url(#ocg)"
+    }), /*#__PURE__*/React.createElement("path", {
+      className: "oc-claw-top",
+      style: {
+        transformOrigin: "16px 8px",
+        animationName: "oc-pinch-low"
+      },
+      d: "M16 8 C20 6 21.8 7.5 21.4 10 C21.1 8 19.5 7.4 18 7.9 C16.9 8.3 16.4 8.1 16 8Z",
+      fill: "url(#ocg)"
+    }), /*#__PURE__*/React.createElement("path", {
+      className: "oc-claw-bot",
+      style: {
+        transformOrigin: "16px 8px",
+        animationName: "oc-pinch"
+      },
+      d: "M16 8 C19 9.4 20.6 11.6 19.6 13.6 C19.5 11.6 18.2 10.4 16.8 9.6 C16 9.1 16 8.5 16 8Z",
+      fill: "url(#ocg)"
+    }))), /*#__PURE__*/React.createElement("circle", {
+      className: "oc-spark s1",
+      cx: "17",
+      cy: "6",
+      r: "1",
+      fill: "#ff5c5c"
+    }), /*#__PURE__*/React.createElement("circle", {
+      className: "oc-spark s2",
+      cx: "6",
+      cy: "6",
+      r: "0.9",
+      fill: "#ff7a7a"
+    }), /*#__PURE__*/React.createElement("circle", {
+      className: "oc-spark s3",
+      cx: "12",
+      cy: "3",
+      r: "0.8",
+      fill: "#ff5c5c"
     }));
   }
 
@@ -1676,7 +1676,7 @@
       className: "am-icon"
     }, /*#__PURE__*/React.createElement(window.AgentGlyph, {
       size: 17,
-      flap: streaming && !msg.content
+      flap: !!streaming
     })), /*#__PURE__*/React.createElement("span", {
       className: "am-name"
     }, meta.name), streaming && !msg.content && /*#__PURE__*/React.createElement("span", {
