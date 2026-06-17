@@ -2052,13 +2052,22 @@ def app_version():
 
 def app_update_status():
     local = _app_local_sha()
-    out = {"current": app_version(), "is_git": (ROOT / ".git").exists(),
+    is_git = (ROOT / ".git").exists()
+    out = {"current": app_version(), "is_git": is_git,
            "tracked": bool(local), "update_available": False}
     try:
         latest = _github_latest_sha()
         out["latest"] = latest[:7]
-        if local and latest:
-            out["update_available"] = (local != latest)
+        if local and latest and local != latest:
+            if is_git:
+                # An update is available only if the remote commit is NOT already in
+                # our history — i.e. we're behind/diverged, not ahead (a dev checkout
+                # with unpushed commits would otherwise spuriously show "update", and
+                # then the ff-only pull "fails"). is-ancestor rc 0 = we already have it.
+                anc = _git("merge-base", "--is-ancestor", latest, "HEAD")
+                out["update_available"] = (anc.returncode != 0)
+            else:
+                out["update_available"] = True
     except Exception as e:
         out["error"] = str(e)
     return out
@@ -2136,6 +2145,19 @@ def run_app_update(job_id):
             r = _git("pull", "--ff-only")
             log(((r.stdout or "") + (r.stderr or "")).strip()[:2000])
             ok = r.returncode == 0
+            if not ok:
+                # A non-zero ff-only pull is usually "nothing to fast-forward" because
+                # we're already current or ahead (unpushed local commits). Don't report
+                # that as a failure.
+                try:
+                    latest = _github_latest_sha()
+                    if _git("merge-base", "--is-ancestor", latest, "HEAD").returncode == 0:
+                        log("Already up to date — nothing to pull.")
+                        with _job_lock:
+                            _install_jobs[job_id]["status"] = "done"
+                        return
+                except Exception:
+                    pass
         else:
             log("Updating (zip install)…")
             _zip_update(log)

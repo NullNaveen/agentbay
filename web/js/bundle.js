@@ -1623,6 +1623,7 @@
     showThinking,
     showTools,
     showUsage,
+    showLatency,
     onRegen,
     onRetry,
     avatars,
@@ -1683,8 +1684,8 @@
       className: "am-thinking shimmer-text"
     }, "Thinking\u2026"), showTimestamps && msg.ts && /*#__PURE__*/React.createElement("span", {
       className: "ts"
-    }, msg.ts)), msg.thought ? /*#__PURE__*/React.createElement(Activity, {
-      seconds: msg.thought
+    }, msg.ts)), showLatency && !streaming && (msg.took || msg.thought) ? /*#__PURE__*/React.createElement(Activity, {
+      seconds: msg.took || msg.thought
     }) : null, msg.plan && msg.plan.length ? (() => {
       const done = msg.plan.filter(p => p.status === "completed").length;
       return /*#__PURE__*/React.createElement("div", {
@@ -1991,6 +1992,7 @@
         showThinking: settings.showThinking,
         showTools: settings.showTools,
         showUsage: settings.showUsage === true,
+        showLatency: settings.showLatency === true,
         onRegen: onRegen,
         avatars: settings.avatars,
         latex: settings.latex,
@@ -5146,6 +5148,13 @@
       on: s.showUsage === true,
       onChange: v => set("showUsage", v),
       label: "Context meter"
+    })), /*#__PURE__*/React.createElement(Row, {
+      t: "Response time",
+      d: "A \u2018Responded in N seconds\u2019 label under each reply. Off by default."
+    }, /*#__PURE__*/React.createElement(Switch, {
+      on: s.showLatency === true,
+      onChange: v => set("showLatency", v),
+      label: "Response time"
     }))), /*#__PURE__*/React.createElement("div", {
       className: "set-section",
       style: {
@@ -9006,6 +9015,7 @@ Object.assign(window, {
     tts: "Browser (system)",
     showThinking: true,
     showTools: true,
+    showLatency: false,
     fallbackModel: "",
     dashboard: false,
     scheduledTasks: false,

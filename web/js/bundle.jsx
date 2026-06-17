@@ -793,7 +793,7 @@
   }
 
   /* ---------- A single assistant turn ---------- */
-  function AssistantTurn({ msg, streaming, isLast, onFollowup, onToast, showTimestamps, showThinking, showTools, showUsage, onRegen, onRetry, avatars, latex, codeBlocks }) {
+  function AssistantTurn({ msg, streaming, isLast, onFollowup, onToast, showTimestamps, showThinking, showTools, showUsage, showLatency, onRegen, onRetry, avatars, latex, codeBlocks }) {
     const meta = modelMeta(msg.model);
     const Ic = I[meta.icon] || I.Bot;
     const [vote, setVote] = useState(0);
@@ -822,7 +822,7 @@
           {showTimestamps && msg.ts && <span className="ts">{msg.ts}</span>}
         </div>
 
-        {msg.thought ? <Activity seconds={msg.thought} /> : null}
+        {showLatency && !streaming && (msg.took || msg.thought) ? <Activity seconds={msg.took || msg.thought} /> : null}
 
         {msg.plan && msg.plan.length ? (() => {
           const done = msg.plan.filter((p) => p.status === "completed").length;
@@ -1007,7 +1007,7 @@
             const liveMsg = isStreamingThis ? { ...m, content: streaming.text, reasoning: streaming.reasoning || m.reasoning, tools: streaming.tools && streaming.tools.length ? streaming.tools : m.tools, plan: streaming.plan && streaming.plan.length ? streaming.plan : m.plan, usage: streaming.usage || m.usage } : m;
             return <AssistantTurn key={i} msg={liveMsg} streaming={isStreamingThis} isLast={isLast}
               onFollowup={onFollowup} onToast={onToast} showTimestamps={settings.timestamps}
-              showThinking={settings.showThinking} showTools={settings.showTools} showUsage={settings.showUsage === true} onRegen={onRegen}
+              showThinking={settings.showThinking} showTools={settings.showTools} showUsage={settings.showUsage === true} showLatency={settings.showLatency === true} onRegen={onRegen}
               avatars={settings.avatars} latex={settings.latex} codeBlocks={settings.codeBlocks} />;
           })}
         </div>
@@ -2226,6 +2226,9 @@
                   </Row>
                   <Row t="Context meter" d="A small badge under each reply showing how much of the AI's memory window is in use (e.g. 15k / 1000k). Off by default.">
                     <Switch on={s.showUsage === true} onChange={(v) => set("showUsage", v)} label="Context meter" />
+                  </Row>
+                  <Row t="Response time" d="A &lsquo;Responded in N seconds&rsquo; label under each reply. Off by default.">
+                    <Switch on={s.showLatency === true} onChange={(v) => set("showLatency", v)} label="Response time" />
                   </Row>
                 </div>
                 <div className="set-section" style={{ marginTop: 24 }}>
@@ -4130,7 +4133,7 @@ Object.assign(window, {
     reduceMotion: false, lang: "en", fontSize: "md", avatars: true, latex: true, codeBlocks: true,
     collapseDefault: false, bubbles: true, timestamps: false, autoScroll: true, followups: false,
     agentsEnabled: false, accent: "#d9a36b", systemPrompt: "", stt: "Whisper (local)", tts: "Browser (system)",
-    showThinking: true, showTools: true, fallbackModel: "",
+    showThinking: true, showTools: true, showLatency: false, fallbackModel: "",
     dashboard: false, scheduledTasks: false, showUsage: false,
   };
   function buildUser(name) {
