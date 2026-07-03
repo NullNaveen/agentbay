@@ -594,6 +594,110 @@
   window.GenericGlyph = GenericGlyph;
   window.AgentGlyph = AgentGlyph;
   window.agentBrandName = agentBrandName;
+
+  // The THINKING indicator — "Synapse Orbit": a breathing core inside a pulsing
+  // halo, with two counter-rotating comet arcs and twinkling sparks. Shown while
+  // the model is working (replaces the per-brand glyph animations); tinted per
+  // agent. SVG gradient ids are per-instance (shared ids resolve against the
+  // FIRST instance in the document — a real bug seen with multiple orbs on screen).
+  let _orbN = 0;
+  function ThinkingOrb(p) {
+    const size = p && p.size || 24;
+    const kind = p && p.kind || typeof window !== "undefined" && window.__agentKind || "hermes";
+    const uid = React.useMemo(() => "to" + ++_orbN, []);
+    const g = uid + "g",
+      l = uid + "l";
+    return /*#__PURE__*/React.createElement("svg", {
+      width: size,
+      height: size,
+      viewBox: "0 0 24 24",
+      fill: "none",
+      className: "orb-think orb-" + (kind === "openclaw" ? "oc" : kind === "hermes" ? "hermes" : "gen"),
+      style: p && p.style,
+      "aria-hidden": "true"
+    }, /*#__PURE__*/React.createElement("defs", null, /*#__PURE__*/React.createElement("radialGradient", {
+      id: g,
+      cx: "0.5",
+      cy: "0.5",
+      r: "0.5"
+    }, /*#__PURE__*/React.createElement("stop", {
+      offset: "0",
+      stopColor: "var(--orb2)",
+      stopOpacity: "0.9"
+    }), /*#__PURE__*/React.createElement("stop", {
+      offset: "1",
+      stopColor: "var(--orb2)",
+      stopOpacity: "0"
+    })), /*#__PURE__*/React.createElement("linearGradient", {
+      id: l,
+      x1: "0",
+      y1: "0",
+      x2: "1",
+      y2: "1"
+    }, /*#__PURE__*/React.createElement("stop", {
+      offset: "0",
+      stopColor: "var(--orb2)"
+    }), /*#__PURE__*/React.createElement("stop", {
+      offset: "1",
+      stopColor: "var(--orb)"
+    }))), /*#__PURE__*/React.createElement("circle", {
+      className: "to-halo",
+      cx: "12",
+      cy: "12",
+      r: "7",
+      fill: "url(#" + g + ")"
+    }), /*#__PURE__*/React.createElement("circle", {
+      className: "to-core",
+      cx: "12",
+      cy: "12",
+      r: "3",
+      fill: "url(#" + l + ")"
+    }), /*#__PURE__*/React.createElement("g", {
+      className: "to-arc1"
+    }, /*#__PURE__*/React.createElement("circle", {
+      cx: "12",
+      cy: "12",
+      r: "8.6",
+      stroke: "url(#" + l + ")",
+      strokeWidth: "1.9",
+      strokeLinecap: "round",
+      strokeDasharray: "17 37",
+      opacity: "0.95"
+    }), /*#__PURE__*/React.createElement("circle", {
+      cx: "12",
+      cy: "12",
+      r: "8.6",
+      stroke: "var(--orb2)",
+      strokeWidth: "0.8",
+      strokeLinecap: "round",
+      strokeDasharray: "27 27",
+      opacity: "0.35"
+    })), /*#__PURE__*/React.createElement("g", {
+      className: "to-arc2"
+    }, /*#__PURE__*/React.createElement("circle", {
+      cx: "12",
+      cy: "12",
+      r: "5.6",
+      stroke: "var(--orb2)",
+      strokeWidth: "1.3",
+      strokeLinecap: "round",
+      strokeDasharray: "8 27.2",
+      opacity: "0.8"
+    })), /*#__PURE__*/React.createElement("circle", {
+      className: "to-tw",
+      cx: "20.6",
+      cy: "12",
+      r: "0.9",
+      fill: "var(--orb2)"
+    }), /*#__PURE__*/React.createElement("circle", {
+      className: "to-tw to-tw2",
+      cx: "3.4",
+      cy: "12",
+      r: "0.9",
+      fill: "var(--orb2)"
+    }));
+  }
+  window.ThinkingOrb = ThinkingOrb;
   function Mascot(p) {
     const label = p && p.label || "Thinking";
     return React.createElement("span", {
@@ -601,9 +705,8 @@
     }, [React.createElement("span", {
       key: "g",
       className: "glyph"
-    }, React.createElement(HermesGlyph, {
-      size: 26,
-      flap: true
+    }, React.createElement(ThinkingOrb, {
+      size: 26
     })), React.createElement("span", {
       key: "l",
       className: "label"
@@ -1675,9 +1778,10 @@
       className: "assistant-head"
     }, avatars !== false && /*#__PURE__*/React.createElement("span", {
       className: "am-icon"
-    }, /*#__PURE__*/React.createElement(window.AgentGlyph, {
-      size: 23,
-      flap: !!streaming
+    }, streaming ? /*#__PURE__*/React.createElement(window.ThinkingOrb, {
+      size: 23
+    }) : /*#__PURE__*/React.createElement(window.AgentGlyph, {
+      size: 23
     })), /*#__PURE__*/React.createElement("span", {
       className: "am-name"
     }, meta.name), streaming && !msg.content && /*#__PURE__*/React.createElement("span", {
@@ -9080,10 +9184,12 @@ Object.assign(window, {
       style: {
         display: "inline-flex"
       }
-    }, /*#__PURE__*/React.createElement(AG, {
+    }, live ? /*#__PURE__*/React.createElement(window.ThinkingOrb, {
       kind: agent,
-      size: 20,
-      flap: !!live
+      size: 20
+    }) : /*#__PURE__*/React.createElement(AG, {
+      kind: agent,
+      size: 20
     })), /*#__PURE__*/React.createElement("b", {
       style: {
         color: COLLAB_COLOR[agent] || "var(--text-1)"
@@ -9422,10 +9528,9 @@ Object.assign(window, {
       style: {
         display: "inline-flex"
       }
-    }, /*#__PURE__*/React.createElement(AG, {
+    }, /*#__PURE__*/React.createElement(window.ThinkingOrb, {
       kind: turn.agent,
-      size: 16,
-      flap: true
+      size: 16
     })), " ", turn.name, " is working", turn.role === "lead" ? " (planning)" : " (reviewing + building)", "\u2026"), doneInfo && /*#__PURE__*/React.createElement("span", {
       className: "clab-doneflag"
     }, DONE_MSG[doneInfo.reason] || "Done."), plan.length > 0 && /*#__PURE__*/React.createElement("div", {

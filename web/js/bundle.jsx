@@ -218,11 +218,55 @@
   window.AgentGlyph = AgentGlyph;
   window.agentBrandName = agentBrandName;
 
+  // The THINKING indicator — "Synapse Orbit": a breathing core inside a pulsing
+  // halo, with two counter-rotating comet arcs and twinkling sparks. Shown while
+  // the model is working (replaces the per-brand glyph animations); tinted per
+  // agent. SVG gradient ids are per-instance (shared ids resolve against the
+  // FIRST instance in the document — a real bug seen with multiple orbs on screen).
+  let _orbN = 0;
+  function ThinkingOrb(p) {
+    const size = (p && p.size) || 24;
+    const kind = (p && p.kind) || (typeof window !== "undefined" && window.__agentKind) || "hermes";
+    const uid = React.useMemo(() => "to" + (++_orbN), []);
+    const g = uid + "g", l = uid + "l";
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+           className={"orb-think orb-" + (kind === "openclaw" ? "oc" : kind === "hermes" ? "hermes" : "gen")}
+           style={p && p.style} aria-hidden="true">
+        <defs>
+          <radialGradient id={g} cx="0.5" cy="0.5" r="0.5">
+            <stop offset="0" stopColor="var(--orb2)" stopOpacity="0.9" />
+            <stop offset="1" stopColor="var(--orb2)" stopOpacity="0" />
+          </radialGradient>
+          <linearGradient id={l} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stopColor="var(--orb2)" />
+            <stop offset="1" stopColor="var(--orb)" />
+          </linearGradient>
+        </defs>
+        <circle className="to-halo" cx="12" cy="12" r="7" fill={"url(#" + g + ")"} />
+        <circle className="to-core" cx="12" cy="12" r="3" fill={"url(#" + l + ")"} />
+        <g className="to-arc1">
+          <circle cx="12" cy="12" r="8.6" stroke={"url(#" + l + ")"} strokeWidth="1.9" strokeLinecap="round"
+                  strokeDasharray="17 37" opacity="0.95" />
+          <circle cx="12" cy="12" r="8.6" stroke="var(--orb2)" strokeWidth="0.8" strokeLinecap="round"
+                  strokeDasharray="27 27" opacity="0.35" />
+        </g>
+        <g className="to-arc2">
+          <circle cx="12" cy="12" r="5.6" stroke="var(--orb2)" strokeWidth="1.3" strokeLinecap="round"
+                  strokeDasharray="8 27.2" opacity="0.8" />
+        </g>
+        <circle className="to-tw" cx="20.6" cy="12" r="0.9" fill="var(--orb2)" />
+        <circle className="to-tw to-tw2" cx="3.4" cy="12" r="0.9" fill="var(--orb2)" />
+      </svg>
+    );
+  }
+  window.ThinkingOrb = ThinkingOrb;
+
   function Mascot(p) {
     const label = (p && p.label) || "Thinking";
     return React.createElement("span", { className: "mascot" }, [
       React.createElement("span", { key: "g", className: "glyph" },
-        React.createElement(HermesGlyph, { size: 26, flap: true })),
+        React.createElement(ThinkingOrb, { size: 26 })),
       React.createElement("span", { key: "l", className: "label" },
         React.createElement("span", { className: "shimmer-text" }, label + "…")),
     ]);
@@ -816,7 +860,7 @@
     return (
       <div className="turn assistant anim-fadeup">
         <div className="assistant-head">
-          {avatars !== false && <span className="am-icon"><window.AgentGlyph size={23} flap={!!streaming} /></span>}
+          {avatars !== false && <span className="am-icon">{streaming ? <window.ThinkingOrb size={23} /> : <window.AgentGlyph size={23} />}</span>}
           <span className="am-name">{meta.name}</span>
           {streaming && !msg.content && <span className="am-thinking shimmer-text">Thinking…</span>}
           {showTimestamps && msg.ts && <span className="ts">{msg.ts}</span>}
@@ -4168,7 +4212,7 @@ Object.assign(window, {
     return (
       <div className="clab-stream">
         <div className="clab-stream-head">
-          <span style={{ display: "inline-flex" }}><AG kind={agent} size={20} flap={!!live} /></span>
+          <span style={{ display: "inline-flex" }}>{live ? <window.ThinkingOrb kind={agent} size={20} /> : <AG kind={agent} size={20} />}</span>
           <b style={{ color: COLLAB_COLOR[agent] || "var(--text-1)" }}>{name}</b>
           {live && <span className="shimmer-text" style={{ fontSize: 12 }}>working…</span>}
         </div>
@@ -4319,7 +4363,7 @@ Object.assign(window, {
         {mode === "collab" && (round > 0 || doneInfo) && (
           <div className="clab-status">
             <span className="clab-round">Round {round}{status.max_rounds ? " / " + status.max_rounds : ""}</span>
-            {turn && running && <span className="clab-working"><span style={{ display: "inline-flex" }}><AG kind={turn.agent} size={16} flap /></span> {turn.name} is working{turn.role === "lead" ? " (planning)" : " (reviewing + building)"}…</span>}
+            {turn && running && <span className="clab-working"><span style={{ display: "inline-flex" }}><window.ThinkingOrb kind={turn.agent} size={16} /></span> {turn.name} is working{turn.role === "lead" ? " (planning)" : " (reviewing + building)"}…</span>}
             {doneInfo && <span className="clab-doneflag">{DONE_MSG[doneInfo.reason] || "Done."}</span>}
             {plan.length > 0 && (
               <div className="clab-plan">{plan.map((p, i) => (

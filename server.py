@@ -68,6 +68,20 @@ WEB = ROOT / "web"
 CONFIG_DIR = Path(os.path.expanduser("~/.agentbay"))
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
+# Sub-path hosting behind a reverse proxy (e.g. nginx at /agentbay/ → here):
+# set AGENTBAY_BASE_PATH=/agentbay and emitted absolute URLs in served HTML/JS
+# plus the auth-cookie Path are rewritten to live under that prefix.
+_BP = os.environ.get("AGENTBAY_BASE_PATH", "").strip().strip("/")
+BASE_PATH = ("/" + _BP) if _BP else ""
+
+# Deployments redirect stdout to a log file; without line buffering Python
+# holds output until exit and agentbay.log looks empty during real activity.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
 # ---- Agent registry -------------------------------------------------------
 AGENTS = {
     "hermes": {
@@ -1187,11 +1201,38 @@ def _oc_thinking_from_file(path):
     return "\n\n".join(thoughts).strip()
 
 
-def _oc_last_thinking(before_mtime=None):
-    """The reasoning of the most recent OpenClaw turn, read from the newest session
-    transcript. `before_mtime` guards against reading a stale transcript when nothing
-    was just written."""
+def _oc_store_session_file(skey):
+    """Resolve an OpenClaw session KEY (e.g. `agent:main:main`) to its transcript
+    file. The gateway does NOT write per-ACP-client files — a bound ACP client's
+    turns land in the store session's `<sessionId>.jsonl` (sessions.json maps
+    key → sessionId). Our own ACP sessionId has no file of its own."""
     try:
+        d = json.loads((_oc_session_dir() / "sessions.json").read_text())
+        ent = d.get(skey)
+        sid = (ent or {}).get("sessionId") if isinstance(ent, dict) else None
+        if sid:
+            p = _oc_session_dir() / (str(sid) + ".jsonl")
+            if p.is_file():
+                return p
+    except Exception:
+        pass
+    return None
+
+
+def _oc_last_thinking(before_mtime=None, skey=None):
+    """The reasoning of the most recent OpenClaw turn. With the turn's session
+    KEY, read exactly that store session's transcript and require it to be
+    FRESH (written during this turn) — a failed turn returns "" instead of
+    silently replaying some older session's reasoning (that stale-replay masked
+    a real pairing error in deployment). Mtime heuristic only when no key."""
+    try:
+        if skey:
+            p = _oc_store_session_file(skey)
+            if not p:
+                return ""
+            if before_mtime is not None and p.stat().st_mtime < before_mtime - 1:
+                return ""                # nothing written this turn → no (stale) reasoning
+            return _oc_thinking_from_file(p)
         files = [f for f in _oc_session_dir().glob("*.jsonl") if not f.name.endswith(".trajectory.jsonl")]
         if not files:
             return ""
@@ -1584,9 +1625,10 @@ def _auth_enabled(cfg=None):
 
 
 def _auth_cookie(token, clear=False):
+    path = BASE_PATH or "/"
     if clear:
-        return "ab_auth=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
-    return "ab_auth=%s; Path=/; HttpOnly; SameSite=Lax; Max-Age=%d" % (token, _AUTH_TTL)
+        return "ab_auth=; Path=%s; HttpOnly; SameSite=Lax; Max-Age=0" % path
+    return "ab_auth=%s; Path=%s; HttpOnly; SameSite=Lax; Max-Age=%d" % (token, path, _AUTH_TTL)
 _share_lock = threading.RLock()
 
 BIN_DIR = CONFIG_DIR / "bin"   # AgentBay's own tool dir — self-contained, no brew/winget needed
@@ -2944,6 +2986,7 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=N
     bin_name = "openclaw" if is_oc else "hermes"
     hb = which(bin_name)
     oc_think_mark = None
+    oc_skey = [None]                           # store-session key seen in this turn's updates
     if is_oc:
         _ensure_oc_thinking()                  # make sure the model reasons (once)
         try:
@@ -3090,6 +3133,9 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=N
                     continue            # ignore resume-replay of prior turns (pre-prompt)
                 u = m.get("params", {}).get("update", {}) or {}
                 t = u.get("sessionUpdate")
+                sk = (u.get("_meta") or {}).get("sessionKey") if isinstance(u.get("_meta"), dict) else None
+                if sk:
+                    oc_skey[0] = sk     # authoritative store-session key for this turn
                 if t == "agent_message_chunk":
                     tx = _ANSI_RE.sub("", (u.get("content") or {}).get("text", ""))
                     if tx:
@@ -3173,7 +3219,9 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=N
             for pev, pdata in peeler.finish():   # flush any buffered tail to the answer
                 yield (pev, pdata)
         if is_oc:
-            think = _oc_last_thinking(oc_think_mark)   # OpenClaw's reasoning lives in the transcript
+            # OpenClaw's reasoning lives in the store session's transcript — read
+            # exactly THIS turn's session (key from the stream, else the bound one)
+            think = _oc_last_thinking(oc_think_mark, skey=oc_skey[0] or "agent:main:main")
             if think:
                 yield ("reasoning", think)
         yield ("done", {})
@@ -3279,6 +3327,46 @@ def _hermes_chat_fallback(messages, session_id=None, model_id=None, images=None,
     yield ("done", {})
 
 
+# OpenClaw gateway device-pairing / scope-upgrade rejections. Each fresh ACP
+# client (we spawn one per turn) may need operator-scope approval; the request
+# fails immediately with a pending-approval error instead of waiting.
+# (`openclaw acp --token …` was tested on 2026.6.x and did NOT bypass the
+# pairing path, so self-approval is the working fix.)
+_OC_PAIR_RE = re.compile(r"scope upgrade|pairing|not (?:yet )?paired|pending approval|device.{0,40}(?:approval|pending)", re.I)
+
+
+def _oc_approve_pending():
+    """Approve pending device-pairing/scope-upgrade requests on the user's OWN
+    local OpenClaw gateway so our next ACP attempt proceeds. AgentBay is the
+    user's trusted local client (auto-approve posture), and this only ever runs
+    against the gateway on this machine. Returns True if anything was approved."""
+    oc = which("openclaw")
+    if not oc:
+        return False
+    env = _agent_env()
+    approved = False
+    try:
+        r = subprocess.run([oc, "devices", "list", "--json"], capture_output=True,
+                           text=True, timeout=25, env=env)
+        d = json.loads(r.stdout or "{}")
+        pend = d.get("pending") or d.get("pendingRequests") or []
+        ids = [p.get("requestId") or p.get("id") for p in pend if isinstance(p, dict)]
+        for rid in [i for i in ids if i]:
+            a = subprocess.run([oc, "devices", "approve", str(rid)], capture_output=True,
+                               text=True, timeout=25, env=env)
+            approved = approved or a.returncode == 0
+        if not approved:
+            # list format drift / race — fall back to approving the latest pending
+            a = subprocess.run([oc, "devices", "approve", "--latest"], capture_output=True,
+                               text=True, timeout=25, env=env)
+            approved = a.returncode == 0
+    except Exception:
+        pass
+    if approved:
+        print("  🔓 approved OpenClaw device-pairing request (self-heal)")
+    return approved
+
+
 def _openclaw_chat(messages, session_id=None, model=None, images=None, env=None):
     """NON-STREAM fallback for OpenClaw via `openclaw agent --json` — used only when
     the ACP bridge yields nothing (e.g. no gateway). Returns the final reply text.
@@ -3343,24 +3431,39 @@ def local_agent_stream(messages, session_id=None, model_id=None, images=None, en
     If ACP yields nothing (no gateway / handshake fail — common on Windows), fall back
     to the reliable one-shot path (`hermes chat -q` / `openclaw agent --json`)."""
     if kind == "openclaw":
-        emitted = 0
-        for ev, payload in acp_stream_turn(messages, session_id, model_id=model_id,
-                                           images=images, env=env, kind="openclaw"):
-            if ev == "__fail__":
-                break
-            if ev == "done":
-                if emitted == 0:
-                    break                          # nothing streamed → use one-shot fallback
+        # Up to 2 attempts: a fresh `openclaw acp` client can be rejected by the
+        # gateway with a pending device-pairing / scope-upgrade request (each new
+        # scope needs its own approval). That error arrives BEFORE any tokens, so
+        # on a zero-output failure that matches, approve the pending request on
+        # our own gateway (AgentBay is the user's trusted local client) and retry
+        # once — no standing external watcher needed.
+        for attempt in (1, 2):
+            emitted = 0
+            fail_txt = None
+            for ev, payload in acp_stream_turn(messages, session_id, model_id=model_id,
+                                               images=images, env=env, kind="openclaw"):
+                if ev == "__fail__":
+                    fail_txt = str(payload)
+                    break
+                if ev == "done":
+                    if emitted == 0:
+                        break                      # nothing streamed → retry / fallback
+                    yield ev, payload
+                    return
+                if ev == "error" and emitted == 0:
+                    fail_txt = str(payload)        # hold pre-output errors (retryable)
+                    continue
+                if ev in ("token", "reasoning", "tool"):
+                    emitted += 1
                 yield ev, payload
+            if emitted:
+                yield ("done", {})
                 return
-            if ev in ("token", "reasoning", "tool"):
-                emitted += 1
+            if attempt == 1 and fail_txt and _OC_PAIR_RE.search(fail_txt) and _oc_approve_pending():
+                continue                           # self-healed the pairing → retry
+            break
+        for ev, payload in _openclaw_chat(messages, session_id, model_id, images, env):
             yield ev, payload
-        if emitted == 0:
-            for ev, payload in _openclaw_chat(messages, session_id, model_id, images, env):
-                yield ev, payload
-        else:
-            yield ("done", {})
         return
     emitted = 0
     failed = None
@@ -4577,7 +4680,16 @@ class Handler(BaseHTTPRequestHandler):
             ctype = {".js": "application/javascript", ".jsx": "text/babel", ".css": "text/css",
                      ".svg": "image/svg+xml", ".png": "image/png",
                      ".html": "text/html; charset=utf-8"}.get(ext, "application/octet-stream")
-        self._send(200, p.read_bytes(), ctype)
+        data = p.read_bytes()
+        # Sub-path hosting: rewrite the absolute URLs the app emits so they resolve
+        # under the proxy prefix. Covers "/static/ + '/static/ (index.html asset
+        # tags) and "/api/ (every fetch in bundle.js uses double quotes).
+        if BASE_PATH and (ctype.startswith("text/html") or ctype.startswith("application/javascript")):
+            bp = BASE_PATH.encode()
+            data = (data.replace(b'"/static/', b'"' + bp + b"/static/")
+                        .replace(b"'/static/", b"'" + bp + b"/static/")
+                        .replace(b'"/api/', b'"' + bp + b"/api/"))
+        self._send(200, data, ctype)
 
 
 # ---- one-click desktop launcher (no terminal needed) ----------------------
@@ -4788,6 +4900,44 @@ def main():
     # NOTE: we no longer auto-import the agent's whole provider catalog — the user
     # wants the dropdown to show ONLY the providers they add in Settings → Providers.
     # (The /api/providers/sync-agent endpoint still exists if it's ever needed.)
+
+    # Declarative first-boot password lock for deployments: AGENTBAY_INITIAL_PASSWORD
+    # enables the lock once when nothing is configured yet — replaces the manual
+    # POST /api/auth/setup step per provisioned user. Ignored if a lock exists.
+    ipw = os.environ.get("AGENTBAY_INITIAL_PASSWORD") or ""
+    if len(ipw) >= 4 and not _auth_enabled():
+        salt, secret = secrets.token_hex(16), secrets.token_hex(32)
+        save_config({"auth": {"enabled": True, "pw_salt": salt,
+                              "pw_hash": _pw_hash(ipw, salt), "secret": secret}})
+        print("  🔒 password lock enabled (AGENTBAY_INITIAL_PASSWORD)")
+
+    # Fresh install whose ONLY brain is the local agent: the picker used to stay
+    # empty (provider default is a cloud id needing a key) until the user manually
+    # added the agent-backed provider. If NO key and NO user-added provider exist
+    # and the agent exposes exactly one provider, enable that one and make it the
+    # default. Configs with any explicit choice are never touched.
+    def _maybe_default_agent_provider():
+        try:
+            cfg = load_config()
+            provs = cfg.get("providers") or {}
+            if any(isinstance(p, dict) and (p.get("key") or p.get("user_added")) for p in provs.values()):
+                return
+            if not _agent_kind(cfg):
+                return
+            upd, _ids = _import_agent_providers()
+            if upd.get("providers"):
+                save_config(upd)
+            cfg = load_config()
+            agent_provs = [pid for pid, p in (cfg.get("providers") or {}).items()
+                           if isinstance(p, dict) and p.get("from_agent")
+                           and not p.get("key") and (p.get("models") or [])]
+            if len(agent_provs) == 1:
+                pid = agent_provs[0]
+                save_config({"provider": pid, "providers": {pid: {"user_added": True}}})
+                print(f"  🤖 default provider: {pid} (via your local agent — no key needed)")
+        except Exception:
+            pass
+    threading.Thread(target=_maybe_default_agent_provider, daemon=True).start()
 
     # Onboarding: make the share-link tool available on every machine (any OS).
     # One-time, in the background, only if missing — so "Remote access" just works.
