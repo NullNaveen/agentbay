@@ -231,6 +231,16 @@ Delete the `auth` entry from `~/.agentbay/config.json`
 | `providers.<id>.user_added` | shows an agent-backed provider in the picker |
 | `auth` | the password lock (hash + salt — delete the entry to reset) |
 | `agent` | force `hermes` or `openclaw` (default: auto) |
+| `aliases` | rename models: `{"provider::model": "My Assistant"}` — the alias shows everywhere and becomes the model's own name |
+
+### Deploy-time environment variables (for scripted/container installs)
+
+| env var | what it does |
+|---|---|
+| `AGENTBAY_USER` | display name shown in the app (overrides the OS username) |
+| `AGENTBAY_INITIAL_PASSWORD` | enables the password lock on first boot (≥4 chars) — no manual setup call |
+| `AGENTBAY_BASE_PATH` | serve under a sub-path behind a reverse proxy, e.g. `/agentbay` |
+| `AGENTBAY_BUILD_SHA` | the exact commit you deployed — makes the update check reliable when `.git` is stripped |
 
 ## Requesting features
 

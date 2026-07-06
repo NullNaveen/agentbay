@@ -749,15 +749,22 @@
   function refreshModels() {
     return fetch("/api/enabled-models").then(r => r.json()).then(d => {
       MODELS.length = 0;
-      (d.models || []).forEach(m => MODELS.push({
-        id: m.provider + "::" + m.model,
-        name: m.label || m.model,
-        desc: m.provider_label,
-        group: m.provider_label || "Models",
-        icon: LABEL_ICON[m.provider_label] || PROVIDER_ICON[m.provider] || "Bot",
-        provider: m.provider,
-        model: m.model
-      }));
+      (d.models || []).forEach(m => {
+        const real = m.label || m.model;
+        const alias = (m.alias || "").trim();
+        MODELS.push({
+          id: m.provider + "::" + m.model,
+          name: alias || real,
+          // alias behaves AS the model name everywhere
+          realName: real,
+          alias,
+          desc: m.provider_label,
+          group: m.provider_label || "Models",
+          icon: LABEL_ICON[m.provider_label] || PROVIDER_ICON[m.provider] || "Bot",
+          provider: m.provider,
+          model: m.model
+        });
+      });
       return MODELS;
     }).catch(() => MODELS);
   }
@@ -817,9 +824,17 @@
     s = s.replace(/`([^`]+)`/g, (_, m) => `<code>${m}</code>`);
     s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
     s = s.replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
+    // Sanitize URLs before they hit an attribute: allowlist safe schemes (block
+    // javascript:/vbscript:/data:text-html — model or fetched content is untrusted)
+    // and neutralize a quote so it can't break out of the attribute.
+    const safeUrl = u => {
+      u = String(u || "").trim();
+      if (!/^(https?:|mailto:|\/|#|\.|data:image\/)/i.test(u)) return "#";
+      return u.replace(/"/g, "%22");
+    };
     // images ![alt](url) — must run before the link rule below
-    s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g, '<img class="md-img" alt="$1" src="$2" loading="lazy" />');
-    s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g, (_, alt, url) => `<img class="md-img" alt="${String(alt).replace(/"/g, "&quot;")}" src="${safeUrl(url)}" loading="lazy" />`);
+    s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, txt, url) => `<a href="${safeUrl(url)}" target="_blank" rel="noopener">${txt}</a>`);
     return s;
   }
   function renderMarkdown(src) {
@@ -1707,11 +1722,6 @@
       onClick: onRegen
     }, /*#__PURE__*/React.createElement(I.Refresh, {
       size: 15
-    })), /*#__PURE__*/React.createElement("button", {
-      className: "act-btn",
-      "aria-label": "More"
-    }, /*#__PURE__*/React.createElement(I.MoreHorizontal, {
-      size: 15
     })));
   }
 
@@ -1910,7 +1920,7 @@
       onInfo: () => onToast({
         type: "info",
         title: meta.name,
-        desc: "Generated in " + (msg.thought || 3) + "s · ~" + Math.max(1, Math.round(msg.content.length / 4)) + " tokens"
+        desc: "Generated in " + (msg.took || msg.thought || 1) + "s · ~" + Math.max(1, Math.round((msg.content || "").length / 4)) + " tokens"
       })
     }), showUsage && !streaming && msg.usage && msg.usage.size > 0 ? (() => {
       const fmtTok = n => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k" : String(n);
@@ -6464,6 +6474,23 @@
     onSetDefault
   }) {
     const [q, setQ] = React.useState("");
+    const [, setTick] = React.useState(0);
+    const setAlias = (m, e) => {
+      e.stopPropagation();
+      const v = window.prompt("Rename “" + m.realName + "” — this alias shows everywhere and becomes the model's name (blank to reset):", m.alias || "");
+      if (v === null) return;
+      fetch("/api/config", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          aliases: {
+            [m.id]: v.trim()
+          }
+        })
+      }).then(() => window.HermesData && window.HermesData.refreshModels && window.HermesData.refreshModels()).then(() => setTick(t => t + 1)).catch(() => {});
+    };
     const all = D.MODELS;
     const ql = q.trim().toLowerCase();
     const matches = ql ? all.filter(m => (m.name + " " + (m.desc || "")).toLowerCase().includes(ql)) : all;
@@ -6558,9 +6585,20 @@
           }
         }, /*#__PURE__*/React.createElement("span", {
           className: "mo-name"
-        }, m.name, m.id === defaultModel && /*#__PURE__*/React.createElement("span", {
+        }, m.name, m.alias && /*#__PURE__*/React.createElement("span", {
+          className: "mo-real"
+        }, " (", m.realName, ")"), m.id === defaultModel && /*#__PURE__*/React.createElement("span", {
           className: "tag-mini"
-        }, "Default"))), m.id === current && /*#__PURE__*/React.createElement("span", {
+        }, "Default"))), /*#__PURE__*/React.createElement("span", {
+          role: "button",
+          tabIndex: 0,
+          className: "mo-alias",
+          title: "Rename (alias)",
+          "aria-label": "Rename model",
+          onClick: e => setAlias(m, e)
+        }, /*#__PURE__*/React.createElement(I.Pencil, {
+          size: 13
+        })), m.id === current && /*#__PURE__*/React.createElement("span", {
           className: "check"
         }, /*#__PURE__*/React.createElement(I.Check, {
           size: 17
@@ -10711,7 +10749,11 @@ Object.assign(window, {
       }));
       if (fmt === "json") return JSON.stringify(s, null, 2);
       if (fmt === "txt") return (s.title || "Chat") + "\n\n" + rows.map(r => r.who + ":\n" + r.c).join("\n\n");
-      if (fmt === "html") return "<!doctype html><meta charset=utf-8><title>" + (s.title || "Chat") + "</title><body style='font:15px/1.6 system-ui;max-width:720px;margin:40px auto;padding:0 16px'>" + "<h1>" + (s.title || "Chat") + "</h1>" + rows.map(r => "<p><b>" + r.who + ":</b><br>" + r.c.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/\n/g, "<br>") + "</p>").join("") + "</body>";
+      if (fmt === "html") {
+        const eh = t => String(t == null ? "" : t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+        const ttl = eh(s.title || "Chat");
+        return "<!doctype html><meta charset=utf-8><title>" + ttl + "</title><body style='font:15px/1.6 system-ui;max-width:720px;margin:40px auto;padding:0 16px'>" + "<h1>" + ttl + "</h1>" + rows.map(r => "<p><b>" + eh(r.who) + ":</b><br>" + eh(r.c).replace(/\n/g, "<br>") + "</p>").join("") + "</body>";
+      }
       return "# " + (s.title || "Chat") + "\n\n" + rows.map(r => "**" + r.who + ":** " + r.c).join("\n\n"); // md
     };
     const doExport = (fmt, label) => {

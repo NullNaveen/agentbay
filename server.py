@@ -23,6 +23,7 @@ import re
 import secrets
 import shutil
 import socket
+import ipaddress
 import ssl
 import subprocess
 import sys
@@ -329,8 +330,9 @@ def delete_session(sid, ts=0):
 
 
 def public_config(cfg):
-    """Config safe to send to the browser — never echo raw keys."""
+    """Config safe to send to the browser — never echo raw keys or the auth block."""
     c = json.loads(json.dumps(cfg))   # deep copy
+    c.pop("auth", None)               # NEVER ship the session secret / pw hash+salt
     provs = {}
     for pid, spec in PROVIDERS.items():
         p = c.get("providers", {}).get(pid, {})
@@ -370,11 +372,24 @@ def enabled_models(cfg):
         if not from_agent and spec.get("needs_key") and not p.get("key"):
             continue                          # native provider needs a key but none saved → nothing to show
         plabel = spec.get("label") or p.get("label") or pid
+        aliases = cfg.get("aliases") or {}
         for m in (p.get("models") or []):
             if m:
                 out.append({"id": pid + "::" + m, "provider": pid, "model": m,
-                            "label": m, "provider_label": plabel, "from_agent": bool(from_agent)})
+                            "label": m, "provider_label": plabel, "from_agent": bool(from_agent),
+                            "alias": (aliases.get(pid + "::" + m) or "")})
     return out
+
+
+def _alias_identity(cfg, provider, model):
+    """A model the user renamed in the picker (cfg.aliases['<provider>::<model>'])
+    should behave as if that alias IS its name. Returns a one-line identity
+    directive to prepend to the turn, or "" when no alias is set."""
+    a = ((cfg.get("aliases") or {}).get((provider or "") + "::" + (model or "")) or "").strip()[:60]
+    if not a:
+        return ""
+    return ('(System note: Your name is "%s". If the user asks who or what you are, '
+            'identify yourself as "%s" and do not name the underlying model.)' % (a, a))
 
 
 def resolve_provider(cfg, pid=None, model=None):
@@ -1585,6 +1600,53 @@ _share_proc = None
 _AUTH_TTL = 7 * 86400
 
 
+_login_state = {}                    # ip -> [fail_count, locked_until]
+_login_lock = threading.Lock()
+
+
+def _login_throttled(ip):
+    """Seconds remaining in a lockout for this IP, or 0. Backs off after 5 fails."""
+    with _login_lock:
+        st = _login_state.get(ip)
+        if st and st[1] > time.time():
+            return int(st[1] - time.time()) + 1
+    return 0
+
+
+def _login_fail(ip):
+    with _login_lock:
+        st = _login_state.get(ip) or [0, 0]
+        st[0] += 1
+        if st[0] >= 5:                # 5 strikes → lock, growing with each further fail
+            st[1] = time.time() + min(300, 5 * (2 ** (st[0] - 5)))
+        _login_state[ip] = st
+
+
+def _login_ok(ip):
+    with _login_lock:
+        _login_state.pop(ip, None)
+
+
+def _url_egress_ok(url):
+    """Guard against SSRF for user/model-supplied URLs on NON-local providers:
+    require http(s) and reject hosts that resolve to loopback/private/link-local/
+    reserved ranges (incl. the 169.254.169.254 cloud-metadata address). The built-in
+    'local' provider is exempt by design — pointing at localhost/LAN Ollama is its job."""
+    try:
+        u = urllib.parse.urlparse((url or "").strip())
+        if u.scheme not in ("http", "https") or not u.hostname:
+            return False
+        infos = socket.getaddrinfo(u.hostname, u.port or (443 if u.scheme == "https" else 80), proto=socket.IPPROTO_TCP)
+        for fam, _t, _p, _c, sa in infos:
+            ip = ipaddress.ip_address(sa[0])
+            if (ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_multicast
+                    or ip.is_reserved or ip.is_unspecified):
+                return False
+        return True
+    except Exception:
+        return False
+
+
 def _pw_hash(pw, salt):
     return hashlib.pbkdf2_hmac("sha256", (pw or "").encode(), bytes.fromhex(salt), 200_000).hex()
 
@@ -1624,11 +1686,18 @@ def _auth_enabled(cfg=None):
     return bool(a.get("enabled") and a.get("pw_hash"))
 
 
+def _cookie_secure():
+    # Add ; Secure when TLS is plausibly in front (share tunnel / EC2 / reverse-proxy
+    # sub-path). Plain local http://127.0.0.1 use isn't broken by omitting it there.
+    return "; Secure" if (SHARE.get("active") or _is_multiuser_ec2() or BASE_PATH) else ""
+
+
 def _auth_cookie(token, clear=False):
     path = BASE_PATH or "/"
+    sec = _cookie_secure()
     if clear:
-        return "ab_auth=; Path=%s; HttpOnly; SameSite=Lax; Max-Age=0" % path
-    return "ab_auth=%s; Path=%s; HttpOnly; SameSite=Lax; Max-Age=%d" % (token, path, _AUTH_TTL)
+        return "ab_auth=; Path=%s; HttpOnly; SameSite=Lax%s; Max-Age=0" % (path, sec)
+    return "ab_auth=%s; Path=%s; HttpOnly; SameSite=Lax%s; Max-Age=%d" % (token, path, sec, _AUTH_TTL)
 _share_lock = threading.RLock()
 
 BIN_DIR = CONFIG_DIR / "bin"   # AgentBay's own tool dir — self-contained, no brew/winget needed
@@ -2037,6 +2106,11 @@ _BUILD_FILE = ROOT / ".agentbay-build"
 
 
 def _app_local_sha():
+    # Scripted/CI/Docker deploys strip .git and know their exact commit — let them
+    # declare it so the update check is reliable instead of guessed from the network.
+    env_sha = (os.environ.get("AGENTBAY_BUILD_SHA") or "").strip()
+    if env_sha:
+        return env_sha
     if (ROOT / ".git").exists():
         try:
             r = _git("rev-parse", "HEAD")
@@ -2974,7 +3048,7 @@ def _cancel_turn(session_id):
     return True
 
 
-def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=None, images=None, env=None, kind="hermes"):
+def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=None, images=None, env=None, kind="hermes", identity=""):
     """Run ONE agent turn over stdio ACP (JSON-RPC). Yields (type, data):
     token / reasoning / tool / plan / usage / error / done. Sessions persist
     (agentbay id ↔ ACP id). Drives `hermes acp` OR `openclaw acp` — same protocol.
@@ -3053,7 +3127,9 @@ def acp_stream_turn(messages, session_id=None, cwd=None, timeout=900, model_id=N
             proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": i, "result": res}) + "\n")
             proc.stdin.flush()
 
-    prompt_blocks = [{"type": "text", "text": user_text}]
+    # Model alias identity: when the user renamed this model, tell the agent its
+    # name so "who are you?" answers with the alias. A single leading directive.
+    prompt_blocks = ([{"type": "text", "text": identity}] if identity else []) + [{"type": "text", "text": user_text}]
     for im in (images or []):
         try:
             data = (im.get("b64") or "")
@@ -3425,11 +3501,20 @@ def _openclaw_chat(messages, session_id=None, model=None, images=None, env=None)
     yield ("done", {})
 
 
-def local_agent_stream(messages, session_id=None, model_id=None, images=None, env=None, kind="hermes"):
+def local_agent_stream(messages, session_id=None, model_id=None, images=None, env=None, kind="hermes", identity=""):
     """Run the on-device agent over ACP (streams reply+thinking+tools+plan+usage).
     Hermes and OpenClaw both speak ACP (`hermes acp` / `openclaw acp --session …`).
     If ACP yields nothing (no gateway / handshake fail — common on Windows), fall back
-    to the reliable one-shot path (`hermes chat -q` / `openclaw agent --json`)."""
+    to the reliable one-shot path (`hermes chat -q` / `openclaw agent --json`).
+    `identity` (model alias): prepended to the latest user turn as a one-line
+    directive so the agent answers "who are you?" with the alias — applies to the
+    ACP path and both one-shot fallbacks uniformly."""
+    if identity:
+        messages = list(messages or [])
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "user":
+                messages[i] = {**messages[i], "content": identity + "\n\n" + (messages[i].get("content") or "")}
+                break
     if kind == "openclaw":
         # Up to 2 attempts: a fresh `openclaw acp` client can be rejected by the
         # gateway with a pending device-pairing / scope-upgrade request (each new
@@ -4128,16 +4213,14 @@ class Handler(BaseHTTPRequestHandler):
         return None
 
     def _share_ok(self):
-        """True when sharing is off, or the request carries the valid token."""
+        """True when sharing is off, or the request carries the valid token.
+        While a share is active the token/cookie is required for EVERY request —
+        we must not exempt based on the Host header (it's client-controlled, so a
+        tunnel client could send any Host to skip the gate). The local browser that
+        started the share already holds the ab_share cookie (set by /api/share/start),
+        and remote sharees have the ?k= link, so neither is locked out."""
         tok = SHARE.get("token")
         if not tok:
-            return True
-        # Only the public share tunnel is gated. Local / reverse-proxy (nginx)
-        # access is already protected and must never be locked out by a share —
-        # otherwise starting a share blocks the normal users on the nginx URL.
-        share_host = urllib.parse.urlparse(SHARE.get("url") or "").netloc.lower()
-        req_host = (self.headers.get("Host") or "").split(",")[0].strip().lower()
-        if share_host and req_host and req_host != share_host:
             return True
         k = self._share_token_in_query()
         if k and secrets.compare_digest(k, tok):
@@ -4343,6 +4426,18 @@ class Handler(BaseHTTPRequestHandler):
                 updates["provider"] = data["provider"]
             if "active_model" in data:
                 updates["active_model"] = data["active_model"]
+            # model aliases: {aliases: {"<provider>::<model>": "My Assistant"}} — empty
+            # string clears one. Trim + cap length; the alias is also injected as the
+            # model's identity on each turn.
+            if isinstance(data.get("aliases"), dict):
+                al = dict((load_config().get("aliases") or {}))
+                for k, v in data["aliases"].items():
+                    v = (v or "").strip()[:60]
+                    if v:
+                        al[k] = v
+                    else:
+                        al.pop(k, None)
+                updates["aliases"] = al
             # per-provider updates: {providers: {deepseek: {key, base_url, models:[...]}}}
             if isinstance(data.get("providers"), dict):
                 pu = {}
@@ -4353,7 +4448,13 @@ class Handler(BaseHTTPRequestHandler):
                     if isinstance(vals.get("models"), list):
                         entry["models"] = [m for m in vals["models"] if isinstance(m, str)]
                     if vals.get("base_url"):
-                        entry["base_url"] = vals["base_url"]
+                        # 'local' (Ollama/LM Studio/MLX) is meant to point at
+                        # localhost/LAN; every other provider must be a real public
+                        # endpoint — reject internal/metadata targets (SSRF).
+                        if pid == "local" or _url_egress_ok(vals["base_url"]):
+                            entry["base_url"] = vals["base_url"]
+                        else:
+                            return self._send(400, {"error": "base_url must be a public http(s) endpoint"})
                     if vals.get("key"):            # only overwrite when non-empty
                         entry["key"] = vals["key"]
                     if entry:
@@ -4454,7 +4555,8 @@ class Handler(BaseHTTPRequestHandler):
             if is_agent:
                 reply, reasoning, tools, plan, usage = "", "", [], [], {}
                 t0 = time.time()
-                for ev, payload in local_agent_stream(msgs, data.get("session_id"), model_id, images, env, kind):
+                ident = _alias_identity(cfg, data.get("provider"), data.get("model"))
+                for ev, payload in local_agent_stream(msgs, data.get("session_id"), model_id, images, env, kind, identity=ident):
                     if ev == "token":
                         reply += payload
                     elif ev == "reasoning":
@@ -4501,7 +4603,8 @@ class Handler(BaseHTTPRequestHandler):
                 if is_agent:
                     # the real on-device agent (tools, terminal) — no gateway needed,
                     # using the picked provider+model (with its saved key) as its brain
-                    for ev, payload in local_agent_stream(msgs, data.get("session_id"), model_id, images, env, kind):
+                    ident = _alias_identity(cfg, data.get("provider"), data.get("model"))
+                    for ev, payload in local_agent_stream(msgs, data.get("session_id"), model_id, images, env, kind, identity=ident):
                         emit(ev, payload)
                 elif use_gw:
                     for ev, payload in _agent_chat_stream(gw, pid, mdl, msgs, data.get("session_id")):
@@ -4628,9 +4731,15 @@ class Handler(BaseHTTPRequestHandler):
             save_config({"auth": {"enabled": True, "pw_salt": salt, "pw_hash": _pw_hash(pw, salt), "secret": secret}})
             return self._send(200, {"ok": True}, cookie=_auth_cookie(_auth_issue(secret)))
         if path == "/api/auth/login":
+            ip = (self.client_address[0] if self.client_address else "?")
+            locked = _login_throttled(ip)
+            if locked:
+                return self._send(429, {"ok": False, "error": "too many attempts — wait %ds" % locked})
             a = load_config().get("auth") or {}
             if _pw_ok(a, data.get("password") or ""):
+                _login_ok(ip)
                 return self._send(200, {"ok": True}, cookie=_auth_cookie(_auth_issue(a.get("secret") or "")))
+            _login_fail(ip)
             return self._send(401, {"ok": False, "error": "wrong password"})
         if path == "/api/auth/logout":
             return self._send(200, {"ok": True}, cookie=_auth_cookie(None, clear=True))
@@ -4638,7 +4747,8 @@ class Handler(BaseHTTPRequestHandler):
             # Turn the lock OFF — requires the current password (or a valid session).
             a = load_config().get("auth") or {}
             if _pw_ok(a, data.get("password") or "") or _auth_token_valid(a, self._cookie("ab_auth")):
-                save_config({"auth": {"enabled": False}})
+                # scrub the secret/hash/salt too — don't leave live credentials on disk
+                save_config({"auth": {"enabled": False, "pw_hash": "", "pw_salt": "", "secret": ""}})
                 return self._send(200, {"ok": True}, cookie=_auth_cookie(None, clear=True))
             return self._send(401, {"ok": False, "error": "wrong password"})
         if path == "/api/agent/reasoning-effort":
@@ -4672,8 +4782,11 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, html.encode(), "text/html; charset=utf-8")
 
     def _serve_file(self, rel, ctype):
+        web_root = WEB.resolve()
         p = (WEB / rel).resolve()
-        if not str(p).startswith(str(WEB.resolve())) or not p.is_file():
+        # confine to WEB and its descendants — a string prefix check would also match
+        # a sibling like `web-classic/`; an ancestor check does not.
+        if not (p == web_root or web_root in p.parents) or not p.is_file():
             return self._send(404, {"error": "not found"})
         if ctype is None:
             ext = p.suffix.lower()
