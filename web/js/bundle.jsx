@@ -2773,11 +2773,14 @@
   function ModelMenu({ anchorRef, current, defaultModel, onClose, onPick, onSetDefault }) {
     const [q, setQ] = React.useState("");
     const [, setTick] = React.useState(0);
-    const setAlias = (m, e) => {
-      e.stopPropagation();
-      const v = window.prompt("Rename “" + m.realName + "” — this alias shows everywhere and becomes the model's name (blank to reset):", m.alias || "");
-      if (v === null) return;
-      fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ aliases: { [m.id]: v.trim() } }) })
+    const [editing, setEditing] = React.useState(null);   // model id being renamed inline
+    const [draft, setDraft] = React.useState("");
+    const startEdit = (m, e) => { e.stopPropagation(); setDraft(m.alias || ""); setEditing(m.id); };
+    const saveEdit = (m) => {
+      const v = draft.trim();
+      setEditing(null);
+      if (v === (m.alias || "")) return;                   // unchanged → no write
+      fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ aliases: { [m.id]: v } }) })
         .then(() => window.HermesData && window.HermesData.refreshModels && window.HermesData.refreshModels())
         .then(() => setTick((t) => t + 1)).catch(() => {});
     };
@@ -2818,14 +2821,26 @@
                 {exp && (ql ? items : items.slice(0, MM_CAP)).map((m) => {
                   const Ic = I[m.icon] || I.Bot;
                   return (
-                    <button key={m.id} className={"model-opt" + (m.id === current ? " sel" : "")} onClick={() => { onClose(); onPick(m.id); }}>
+                    <button key={m.id} className={"model-opt" + (m.id === current ? " sel" : "")}
+                            onClick={() => { if (editing === m.id) return; onClose(); onPick(m.id); }}>
                       <span className="mo-icon"><Ic size={16} /></span>
                       <span style={{ flex: 1, minWidth: 0 }}>
-                        <span className="mo-name">{m.name}{m.alias && <span className="mo-real"> ({m.realName})</span>}{m.id === defaultModel && <span className="tag-mini">Default</span>}</span>
+                        {editing === m.id ? (
+                          <input autoFocus className="mo-rename" value={draft}
+                            placeholder={m.realName}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => setDraft(e.target.value)}
+                            onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") saveEdit(m); else if (e.key === "Escape") setEditing(null); }}
+                            onBlur={() => saveEdit(m)} />
+                        ) : (
+                          <span className="mo-name">{m.name}{m.alias && <span className="mo-real"> ({m.realName})</span>}{m.id === defaultModel && <span className="tag-mini">Default</span>}</span>
+                        )}
                       </span>
-                      <span role="button" tabIndex={0} className="mo-alias" title="Rename (alias)" aria-label="Rename model"
-                            onClick={(e) => setAlias(m, e)}><I.Pencil size={13} /></span>
-                      {m.id === current && <span className="check"><I.Check size={17} /></span>}
+                      {editing !== m.id && (
+                        <span role="button" tabIndex={0} className="mo-alias" title="Rename (alias)" aria-label="Rename model"
+                              onClick={(e) => startEdit(m, e)}><I.Pencil size={13} /></span>
+                      )}
+                      {m.id === current && editing !== m.id && <span className="check"><I.Check size={17} /></span>}
                     </button>
                   );
                 })}

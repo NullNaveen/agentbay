@@ -6475,10 +6475,17 @@
   }) {
     const [q, setQ] = React.useState("");
     const [, setTick] = React.useState(0);
-    const setAlias = (m, e) => {
+    const [editing, setEditing] = React.useState(null); // model id being renamed inline
+    const [draft, setDraft] = React.useState("");
+    const startEdit = (m, e) => {
       e.stopPropagation();
-      const v = window.prompt("Rename “" + m.realName + "” — this alias shows everywhere and becomes the model's name (blank to reset):", m.alias || "");
-      if (v === null) return;
+      setDraft(m.alias || "");
+      setEditing(m.id);
+    };
+    const saveEdit = m => {
+      const v = draft.trim();
+      setEditing(null);
+      if (v === (m.alias || "")) return; // unchanged → no write
       fetch("/api/config", {
         method: "POST",
         headers: {
@@ -6486,7 +6493,7 @@
         },
         body: JSON.stringify({
           aliases: {
-            [m.id]: v.trim()
+            [m.id]: v
           }
         })
       }).then(() => window.HermesData && window.HermesData.refreshModels && window.HermesData.refreshModels()).then(() => setTick(t => t + 1)).catch(() => {});
@@ -6571,6 +6578,7 @@
           key: m.id,
           className: "model-opt" + (m.id === current ? " sel" : ""),
           onClick: () => {
+            if (editing === m.id) return;
             onClose();
             onPick(m.id);
           }
@@ -6583,22 +6591,34 @@
             flex: 1,
             minWidth: 0
           }
-        }, /*#__PURE__*/React.createElement("span", {
+        }, editing === m.id ? /*#__PURE__*/React.createElement("input", {
+          autoFocus: true,
+          className: "mo-rename",
+          value: draft,
+          placeholder: m.realName,
+          onClick: e => e.stopPropagation(),
+          onChange: e => setDraft(e.target.value),
+          onKeyDown: e => {
+            e.stopPropagation();
+            if (e.key === "Enter") saveEdit(m);else if (e.key === "Escape") setEditing(null);
+          },
+          onBlur: () => saveEdit(m)
+        }) : /*#__PURE__*/React.createElement("span", {
           className: "mo-name"
         }, m.name, m.alias && /*#__PURE__*/React.createElement("span", {
           className: "mo-real"
         }, " (", m.realName, ")"), m.id === defaultModel && /*#__PURE__*/React.createElement("span", {
           className: "tag-mini"
-        }, "Default"))), /*#__PURE__*/React.createElement("span", {
+        }, "Default"))), editing !== m.id && /*#__PURE__*/React.createElement("span", {
           role: "button",
           tabIndex: 0,
           className: "mo-alias",
           title: "Rename (alias)",
           "aria-label": "Rename model",
-          onClick: e => setAlias(m, e)
+          onClick: e => startEdit(m, e)
         }, /*#__PURE__*/React.createElement(I.Pencil, {
           size: 13
-        })), m.id === current && /*#__PURE__*/React.createElement("span", {
+        })), m.id === current && editing !== m.id && /*#__PURE__*/React.createElement("span", {
           className: "check"
         }, /*#__PURE__*/React.createElement(I.Check, {
           size: 17
