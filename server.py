@@ -1544,10 +1544,10 @@ def update_status(agent_id):
 
 
 # ---- install / update (background job) ------------------------------------
-def run_install(job_id, agent_id, which="install"):
+def run_install(job_id, agent_id, kind="install"):
     spec = AGENTS[agent_id]
     sysname = platform.system().lower()
-    cmd = spec.get(which, {}).get(sysname)
+    cmd = spec.get(kind, {}).get(sysname)
 
     def log(line):
         with _job_lock:
@@ -1556,7 +1556,7 @@ def run_install(job_id, agent_id, which="install"):
     if not cmd:
         with _job_lock:
             _install_jobs[job_id]["status"] = "error"
-        log(f"No {which} command defined for OS '{sysname}'.")
+        log(f"No {kind} command defined for OS '{sysname}'.")
         return
 
     log(f"$ {cmd}")
@@ -4157,6 +4157,11 @@ def list_models(spec, base, key):
 
 def test_provider(cfg, provider, key_override=None, base_override=None):
     pid, spec, p = resolve_provider(cfg, provider)
+    # Same SSRF guard the config-save path uses: a caller-supplied base_url may only point
+    # at a public endpoint (except 'local', which is meant for localhost/LAN Ollama/MLX).
+    # Without this, /api/test-key could be used to probe internal services and cloud metadata.
+    if base_override and pid != "local" and not _url_egress_ok(base_override):
+        return {"ok": False, "error": "base_url must be a public http(s) endpoint"}
     base = (base_override or p["base_url"]).rstrip("/")
     key = key_override or p["key"]
     if spec.get("needs_key") and not key:
