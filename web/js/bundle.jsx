@@ -356,7 +356,9 @@
   }
 
   function renderMarkdown(src) {
-    const lines = src.split("\n");
+    // Coerce non-strings (imported ChatGPT/OpenAI exports carry assistant turns with
+    // content:null; an object/null here used to throw and white-screen the whole app).
+    const lines = String(src == null ? "" : src).split("\n");
     let html = "", i = 0;
     let codeId = 0;
     while (i < lines.length) {
@@ -684,7 +686,9 @@
     const [filter, setFilter] = useState("");
     const userRef = useRef(null);
 
-    const filtered = sessions.filter((s) => !filter || s.title.toLowerCase().includes(filter.toLowerCase()));
+    // Archived chats are hidden from the default list but reappear when the user searches the
+    // "Filter chats" box, so they stay findable and can be unarchived from the chat menu.
+    const filtered = sessions.filter((s) => (filter ? s.title.toLowerCase().includes(filter.toLowerCase()) : !s.archived));
     const pinned = filtered.filter((s) => s.pinned);
     const groups = {};
     filtered.filter((s) => !s.pinned).forEach((s) => { (groups[s.group] = groups[s.group] || []).push(s); });
@@ -2377,7 +2381,7 @@
     useEffect(() => { inputRef.current && inputRef.current.focus(); }, []);
 
     const chatMatches = q ? sessions.filter((s) => s.title.toLowerCase().includes(q.toLowerCase())).slice(0, 20) : sessions.slice(0, 6);
-    const msgMatches = q ? sessions.filter((s) => s.messages.some((m) => m.content.toLowerCase().includes(q.toLowerCase()))).slice(0, 8) : [];
+    const msgMatches = q ? sessions.filter((s) => s.messages.some((m) => String(m.content || "").toLowerCase().includes(q.toLowerCase()))).slice(0, 8) : [];
     const items = [
       ...chatMatches.map((s) => ({ type: "chat", s })),
       ...msgMatches.map((s) => ({ type: "msg", s })),
@@ -2419,8 +2423,8 @@
               <div className="search-group-h">Messages</div>
               {msgMatches.map((s, i) => {
                 const idx = chatMatches.length + i;
-                const hit = s.messages.find((m) => m.content.toLowerCase().includes(q.toLowerCase()));
-                const snippet = hit ? hit.content.replace(/[#*`>]/g, "").slice(0, 90) : "";
+                const hit = s.messages.find((m) => String(m.content || "").toLowerCase().includes(q.toLowerCase()));
+                const snippet = hit ? String(hit.content || "").replace(/[#*`>]/g, "").slice(0, 90) : "";
                 return (
                   <div key={s.id} className={"search-res" + (cursor === idx ? " cursor" : "")} onClick={() => choose({ type: "msg", s })} onMouseEnter={() => setCursor(idx)}>
                     <span className="ic"><I.FileText size={16} /></span>
@@ -2478,7 +2482,7 @@
         <button className="pop-item" onClick={() => { onClose(); onPin(session); }}><span className="ic"><I.Pin size={16} /></span> {session.pinned ? "Unpin" : "Pin"}</button>
         <button className="pop-item" onClick={() => { onClose(); onTag(session); }}><span className="ic"><I.Tag size={16} /></span> Tags</button>
         <button className="pop-item" onClick={() => { onClose(); onExport(session); }}><span className="ic"><I.Download size={16} /></span> Export</button>
-        <button className="pop-item" onClick={() => { onClose(); onArchive(session); }}><span className="ic"><I.Archive size={16} /></span> Archive</button>
+        <button className="pop-item" onClick={() => { onClose(); onArchive(session); }}><span className="ic"><I.Archive size={16} /></span> {session.archived ? "Unarchive" : "Archive"}</button>
         <div className="pop-divider" />
         <button className="pop-item danger" onClick={() => { onClose(); onDelete(session); }}><span className="ic"><I.Trash size={16} /></span> Delete</button>
       </Popover>
@@ -5015,7 +5019,10 @@ Object.assign(window, {
     /* ---- session ops ---- */
     const renameSession = (id, title) => setSessions((ss) => ss.map((s) => s.id === id ? { ...s, title } : s));
     const pinSession = (s) => { setSessions((ss) => ss.map((x) => x.id === s.id ? { ...x, pinned: !x.pinned } : x)); toast({ type: "success", title: s.pinned ? "Unpinned" : "Pinned to top" }); };
-    const archiveSession = (s) => { removeSessionRemote(s.id); setSessions((ss) => ss.filter((x) => x.id !== s.id)); if (activeId === s.id) setActiveId(null); toast({ type: "info", title: "Chat archived" }); };
+    // Archive is NON-destructive: it just flips an `archived` flag (synced across devices).
+    // It used to call removeSessionRemote, which tombstoned the chat everywhere — a silent,
+    // unrecoverable delete for anyone who clicked "Archive" expecting to tidy the sidebar.
+    const archiveSession = (s) => { const now = !s.archived; setSessions((ss) => ss.map((x) => x.id === s.id ? { ...x, archived: now } : x)); if (now && activeId === s.id) setActiveId(null); toast({ type: "info", title: now ? "Chat archived" : "Chat unarchived" }); };
     const deleteSession = (s) => { removeSessionRemote(s.id); setSessions((ss) => ss.filter((x) => x.id !== s.id)); if (activeId === s.id) setActiveId(null); setModal(null); toast({ type: "info", title: "Chat deleted" }); };
 
     /* ---- composer helpers: real file attach (reads text content, sent with the message) ---- */
