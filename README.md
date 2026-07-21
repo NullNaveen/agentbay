@@ -6,6 +6,8 @@
 
 *No build. No node_modules. No clutter. Just Python 3 and your browser.*
 
+<img src="docs/hero.png" alt="AgentBay chatting with a local model — rendered tables, syntax-highlighted code, one-click copy" width="860"/>
+
 </div>
 
 ---
@@ -52,6 +54,16 @@ It opens at `http://127.0.0.1:8700` (or the next free port). No Python? The inst
 - **Yours** — everything stays on your machine. Keys live in `~/.agentbay/config.json` (chmod 600). Optional password lock when you open it to the network.
 
 **There's a lot more under the hood** — a chart dashboard, scheduled tasks, image input, slash commands, and a drawer full of optional settings.
+
+<div align="center">
+
+| Dark mode | Settings | On your phone |
+|:---:|:---:|:---:|
+| <img src="docs/dark.png" alt="Dark mode" width="270"/> | <img src="docs/settings.png" alt="Settings — themes, providers, agent" width="270"/> | <img src="docs/mobile.png" alt="Responsive on mobile" width="150"/> |
+
+<sub>Shown with the built-in <b>Hermes</b> skin. Every screen adapts to light/dark and to your phone.</sub>
+
+</div>
 
 ### 📖 **[Read the full guide → FEATURES.md](FEATURES.md)**
 
